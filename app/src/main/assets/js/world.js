@@ -342,7 +342,7 @@ class World {
       inp: new Float32Array(NI), out: new Float32Array(NO), hs: new Float32Array(H),
       noiseH: new Float32Array(H), noiseO: new Float32Array(NO),
       eih: new Float32Array(H * NI), ehh: new Float32Array(H * H), ebh: new Float32Array(H), eho: new Float32Array(NO * H), ebo: new Float32Array(NO),
-      rbar: 0, meals: 0, biteT: 9, eating: 0, walk: 0, blink: 3, lastSeen: 0, px: x, py: 0, lastReward: 0, gain: 0, seenId: 0, prevAir: false, prevVy: 0, learnN: 0, carryAmt: 0, sp: 0, attackedT: -99, attacker: null, hyd: 90, drinkR: 0, touchW: 0, cold: 0, sick: 0, gainIn: 0, voiceCd: 0, utt: [], lastSyl: 0, say: null, touchO: null, digKey: -1, digP: 0, carry: 0, builds: 0, spoke: 0, rayHit: new Int8Array(RAY_ANGLES.length), rayD: new Float32Array(RAY_ANGLES.length), hs2: null, rayTox: 0
+      rbar: 0, meals: 0, biteT: 9, eating: 0, walk: 0, blink: 3, lastSeen: 0, px: x, py: 0, lastReward: 0, gain: 0, seenId: 0, prevAir: false, prevVy: 0, learnN: 0, carryAmt: 0, carryT: 0, sp: 0, attackedT: -99, attacker: null, hyd: 90, drinkR: 0, touchW: 0, cold: 0, sick: 0, gainIn: 0, voiceCd: 0, utt: [], lastSyl: 0, say: null, touchO: null, digKey: -1, digP: 0, carry: 0, builds: 0, spoke: 0, rayHit: new Int8Array(RAY_ANGLES.length), rayD: new Float32Array(RAY_ANGLES.length), hs2: null, rayTox: 0
     };
     this.creatures.push(c); return c;
   }
@@ -566,10 +566,10 @@ class World {
     }
     // greppa mat: plocka bär från en mogen växt och bära dem i munnen
     if (!c.carry && c.out[3] > 0.5 && plant && plant.b > plant.max * 0.4 && plant.b > 4) {
-      plant.b -= 4; c.carry = FOOD; c.carryAmt = 4;
+      plant.b -= 4; c.carry = FOOD; c.carryAmt = 4; c.carryT = 0;
       this.first('pickfood', `${c.name} plockar bär och bär dem med sig i munnen.`);
     }
-    c.biteT += dt;
+    c.biteT += dt; c.carryT = (c.carryT || 0) + dt;
     // dricka: munnen i vatten och viljan att äta/dricka
     c.touchW = (this.waterAt(mx, c.y - c.h * 0.4) || this.waterAt(mx, c.y + 1) || this.waterAt(c.x, c.y - c.h * 0.5)) ? 1 : 0;
     c.drinkR = 0;
@@ -631,7 +631,8 @@ class World {
       } else c.digP = 0;
     } else c.digP = 0;
     // lägga ner mat på marken: den kan ätas senare (och ruttnar långsammare i kyla)
-    if (c.carry === FOOD && c.out[3] < -0.5 && c.grounded && this.items.length < 400) {
+    // bara den som burit maten en stund kan lägga ner den (inget plocka-släppa-plocka), och var och en har högst 10 förråd
+    if (c.carry === FOOD && c.out[3] < -0.5 && c.grounded && c.carryT > 1.5 && this.items.length < 400 && this.ownItems(c.id) < 10) {
       this.items.push({ x: wrapX(mx), y: c.y, f: c.carryAmt, t: this.time, owner: c.id }); c.carry = 0; c.carryAmt = 0;
       this.first('cache', `${c.name} lägger ner bär på marken. Kanske början på ett förråd?`);
     }
@@ -753,10 +754,11 @@ class World {
     let alive = 0; for (const o of this.creatures) if (o.alive) alive++;
     if (!alive) this.chron('Det finns inget liv kvar i dalen. Bara växterna och jorden minns.');
   }
+  ownItems(id) { let n = 0; for (const it of this.items) if (it.owner === id) n++; return n; }
   rotItems(dt) {
     for (const it of this.items) {
       const tx = wrapT(Math.floor(it.x / TS)), t = this.localTemp(tx), under = Math.floor(it.y / TS) - this.surface[tx] > 1;
-      it.f -= dt * 0.002 * (t > 0 ? 1 + t / 8 : 0.25) * (under ? 0.4 : 1);
+      const r = Math.min(it.f, dt * 0.0012 * (t > 0 ? 1 + t / 8 : 0.25) * (under ? 0.4 : 1)); it.f -= r; this.fertilize(it.x, r * 0.06); // ruttna bär blir jord
     }
     if (this.items.some(it => it.f <= 0.2)) this.items = this.items.filter(it => it.f > 0.2);
   }
