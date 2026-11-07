@@ -31,6 +31,7 @@ const MAT = { 1: 'jord', 2: 'jord', 3: 'sten', 4: 'sand', 6: 'lera' };
 const CTX = [['food', 'nära mat'], ['mate', 'nära en möjlig partner'], ['child', 'nära sitt barn'], ['young', 'när talaren är ung'], ['hungry', 'när talaren är hungrig'], ['dark', 'i mörker'], ['alone', 'när talaren är ensam']];
 const OUT_ACTIVE = [1, 1, 1, 1, 1, 1, 1, 1, 1]; // alla utgångar är inkopplade i kroppen (fas 3)
 const MAXPOP = 120;      // tekniskt tak för vad en mobil orkar
+const EMAX = 180;        // över 120 lagras energin som fett – en buffert inför vintern
 const ADULT = 2 * DAY;   // vuxen efter två dygn
 const GROW_T = 1.5 * DAY; // tid att växa till full storlek
 const NI = IN_LABELS.length, NO = OUT_LABELS.length;
@@ -495,10 +496,10 @@ class World {
     if (!plant) for (const d of this.corpses) { if (d.flesh > 0.2 && Math.abs(wrapD(mx - d.x)) < d.w / 2 + 2 && Math.abs(c.y - d.y) < 10) { c.touch = 1; corpse = d; break; } }
     if (c.out[2] > 0) {
       c.energy -= 0.01 * dt;
-      if (c.touch && c.energy < 120) {
+      if (c.touch && c.energy < EMAX) {
         const food = plant ? plant.b - 0.2 : corpse.flesh, bite = Math.min(food, 3 * dt * (0.5 + c.size * 0.5));
         const poison = plant ? (plant.tox || 0) * (1 - (c.g.tol || 0)) : 0;
-        const gain = Math.max(0, Math.min(bite * 1.6 * (1 - poison), 120 - c.energy));
+        const gain = Math.max(0, Math.min(bite * 1.6 * (1 - poison) * (c.energy > 120 ? 0.7 : 1), EMAX - c.energy));
         if (poison > 0.05) { const hurt = bite * poison * 1.5; c.energy -= hurt; c.pain = Math.min(1, c.pain + hurt / 3); c.sick = 1; if (poison > 0.3) this.first('poisoned', `${c.name} äter av en giftig växt och mår illa.`); }
         if (plant) { plant.b -= bite; c.hyd = Math.min(100, c.hyd + bite * 1.2); } else { corpse.flesh -= bite; this.first('scav', `${c.name} äter av den döda kroppen efter ${corpse.name}. Det har aldrig hänt i dalen förut.`); }
         c.energy += gain; c.gain += gain; c.eating = 1;
@@ -787,4 +788,4 @@ class World {
   }
 }
 
-if (typeof module !== 'undefined') module.exports = { World, YEAR, VOX, CTX, MAT, MAXPOP, ADULT, WPX, wrapX, wrapD, wrapT, TS, WW, WH, DAY, DT, T, NI, NO, IN_LABELS, OUT_LABELS, OUT_ACTIVE, RAY_ANGLES, RAY_LEN, hash2, clamp };
+if (typeof module !== 'undefined') module.exports = { World, EMAX, YEAR, VOX, CTX, MAT, MAXPOP, ADULT, WPX, wrapX, wrapD, wrapT, TS, WW, WH, DAY, DT, T, NI, NO, IN_LABELS, OUT_LABELS, OUT_ACTIVE, RAY_ANGLES, RAY_LEN, hash2, clamp };

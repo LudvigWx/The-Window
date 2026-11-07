@@ -288,7 +288,7 @@ class Renderer {
     if (G.tail > 0) { const bx = segX(0) - G.segL * 0.5; g.strokeStyle = col(45); g.lineWidth = 1.8; g.beginPath(); g.moveTo(bx, bodyY); g.quadraticCurveTo(bx - G.tail * 0.6, bodyY - G.tail * 0.2 + Math.sin(t * 3 + c.id) * 2, bx - G.tail, bodyY - G.tail * 0.5 + Math.sin(t * 3 + c.id + 1) * 2.5); g.stroke(); }
     // kropp, segment bakifrån och fram
     for (let i = 0; i < G.seg; i++) {
-      const sx = segX(i), head = i === G.seg - 1, rx = G.segL * (head ? 0.62 : 0.56), ry = G.segH / 2 * (head ? 1.05 : 1) * breathe;
+      const fat = 1 + Math.max(0, c.energy - 120) / 260, sx = segX(i), head = i === G.seg - 1, rx = G.segL * (head ? 0.62 : 0.56) * (head ? 1 : fat), ry = G.segH / 2 * (head ? 1.05 : fat) * breathe;
       const gr = g.createLinearGradient(0, bodyY - ry, 0, bodyY + ry); gr.addColorStop(0, col(64)); gr.addColorStop(1, col(42));
       g.fillStyle = gr; g.beginPath(); g.ellipse(sx, bodyY, rx, ry, 0, 0, 6.283); g.fill();
       if (G.pattern === 1) { g.fillStyle = col2(48); for (let s = -1; s <= 1; s++) g.fillRect(sx + s * rx * 0.45 - 0.6, bodyY - ry * 0.9, 1.2, ry * 1.3); }

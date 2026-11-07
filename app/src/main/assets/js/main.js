@@ -216,7 +216,7 @@ function seeing(c) {
 function updCard() {
   const c = sel; if (!c || $('#card').classList.contains('hidden') || !world) return;
   $('#cName').textContent = c.name + (c.alive ? '' : ' †'); $('#cTag').textContent = (c.gen === 1 ? 'Stamförälder' : 'Generation ' + c.gen) + (c.size < 1 ? ' · ung' : '');
-  $('#cEn').style.width = clamp(c.energy / 120 * 100, 0, 100) + '%'; $('#cEnT').textContent = Math.max(0, Math.round(c.energy)) + ' / 120';
+  $('#cEn').style.width = clamp(c.energy / EMAX * 100, 0, 100) + '%'; $('#cEnT').textContent = Math.max(0, Math.round(c.energy)) + (c.energy > 120 ? ' (fettreserv)' : '') + ' / ' + EMAX;
   const feel = []; if (c.hyd < 50) feel.push(c.hyd < 15 ? 'mycket törstig' : 'törstig'); if (c.cold > 2) feel.push(c.cold > 6 ? 'fryser mycket' : 'fryser'); if (c.sick > 0.2) feel.push('mår illa'); if (c.energy < 30) feel.push('hungrig');
   const G = c.g;
   $('#cInfo').innerHTML = `Gör just nu: <b>${doing(c)}</b>${feel.length ? ` · Känner sig <b>${feel.join(', ')}</b>` : ''}<br>Ser: <b>${esc(seeing(c))}</b><br>Ålder: <b>${world.fmtAge(c.age)}</b> · Måltider: <b>${c.meals}</b><br>` +
