@@ -104,6 +104,8 @@ class Renderer {
     const dusk = Math.max(0, 1 - Math.abs(sh) * 3.2);
     let topC = mix([8, 10, 28], [70, 130, 210], L), botC = mix([20, 22, 50], [170, 205, 235], L);
     botC = mix(botC, [240, 140, 90], dusk * 0.7); topC = mix(topC, [90, 70, 130], dusk * 0.4);
+    const rain = world.weather ? world.weather.rain : 0;
+    if (rain > 0) { const grey = mix([30, 32, 40], [120, 128, 140], L); topC = mix(topC, grey, rain * 0.75); botC = mix(botC, grey, rain * 0.6); }
     const gr = g.createLinearGradient(0, 0, 0, H);
     gr.addColorStop(0, `rgb(${topC})`); gr.addColorStop(1, `rgb(${botC})`);
     g.fillStyle = gr; g.fillRect(0, 0, W, H);
@@ -157,7 +159,13 @@ class Renderer {
       g.save(); g.translate(sh, 0);
       g.drawImage(this.terrain, 0, 0);
       g.fillStyle = '#07070c'; g.fillRect(0, WH * TS, WPX, 4000);
-      this.water(world, g, t, L);
+      const vx0 = Math.floor((this.cam.x - this.W / 2 / z - sh) / TS) - 1, vx1 = Math.ceil((this.cam.x + this.W / 2 / z - sh) / TS) + 1;
+      const vy0 = Math.max(0, Math.floor((this.cam.y - this.H / 2 / z) / TS) - 1), vy1 = Math.min(WH - 1, Math.ceil((this.cam.y + this.H / 2 / z) / TS) + 1);
+      const tx0 = Math.max(0, vx0), tx1 = Math.min(WW - 1, vx1);
+      if (tx0 <= tx1) {
+        this.water(world, g, t, L, tx0, tx1, vy0, vy1);
+        this.snowCover(world, g, tx0, tx1);
+      }
       this.plants(world, g, t);
       g.restore();
     }
@@ -178,6 +186,13 @@ class Renderer {
     this.particles = this.particles.filter(p => p.life > 0);
     // natt
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // regn och snö
+    const rn = world.weather ? world.weather.rain : 0;
+    if (rn > 0) {
+      const snowing = world.temp < 0, n = Math.floor(rn * (snowing ? 90 : 140)), tt = world.time, W = this.W, H = this.H;
+      if (snowing) { g.fillStyle = 'rgba(250,250,255,0.85)'; for (let i = 0; i < n; i++) { const sp = 18 + hash2(i, 3) * 16, x = ((hash2(i, 1) * W + Math.sin(tt * 0.8 + i) * 12 + tt * 6) % W + W) % W, y = ((hash2(i, 2) * H + tt * sp) % H); g.beginPath(); g.arc(x, y, 1 + hash2(i, 4) * 1.4, 0, 6.283); g.fill(); } }
+      else { g.strokeStyle = 'rgba(200,215,240,0.45)'; g.lineWidth = 1; g.beginPath(); for (let i = 0; i < n; i++) { const sp = 420 + hash2(i, 3) * 200, x = ((hash2(i, 1) * W - tt * 40) % W + W) % W, y = ((hash2(i, 2) * H + tt * sp) % H); g.moveTo(x, y); g.lineTo(x - 3, y + 12); } g.stroke(); }
+    }
     const nightA = (1 - L) * 0.55;
     if (nightA > 0.01) { g.fillStyle = `rgba(6,8,30,${nightA})`; g.fillRect(0, 0, this.W, this.H); }
     // ögon som lyser svagt i mörkret, och namn
@@ -208,33 +223,42 @@ class Renderer {
     }
   }
 
-  water(world, g, t, L) {
-    const lk = world.lake; if (!lk) return;
-    for (let tx = lk.x0 - 1; tx <= lk.x1 + 1; tx++) for (let ty = lk.level - 1; ty < WH; ty++) {
-      if (world.tile(tx, ty) !== T.WATER) continue;
+  water(world, g, t, L, tx0, tx1, ty0, ty1) {
+    const frozen = world.temp < -1;
+    for (let tx = tx0; tx <= tx1; tx++) for (let ty = ty0; ty <= ty1; ty++) {
+      if (world.tiles[ty * WW + tx] !== T.WATER) continue;
       const surf = world.tile(tx, ty - 1) === T.AIR;
-      g.fillStyle = `rgba(${40 + L * 40},${90 + L * 60},${150 + L * 60},0.62)`;
+      g.fillStyle = frozen && surf ? `rgba(${170 + L * 60},${200 + L * 40},${225 + L * 30},0.85)` : `rgba(${40 + L * 40},${90 + L * 60},${150 + L * 60},0.62)`;
       g.fillRect(tx * TS, ty * TS, TS, TS);
+      if (frozen) continue;
       if (surf) { for (let px = 0; px < TS; px++) { const X = tx * TS + px, y = ty * TS + Math.sin(X * 0.25 + t * 1.6) * 0.8; g.fillStyle = `rgba(200,230,255,${0.35 + L * 0.3})`; g.fillRect(X, y, 1, 1); } }
     }
   }
 
+  snowCover(world, g, tx0, tx1) {
+    if (world.snow < 0.02) return;
+    g.fillStyle = `rgba(245,248,255,${Math.min(0.95, world.snow * 1.4)})`;
+    for (let tx = tx0; tx <= tx1; tx++) { const y = world.surface[tx] * TS; if (world.tiles[(world.surface[tx] - 1) * WW + tx] !== T.AIR) continue; g.fillRect(tx * TS, y - 1, TS, 1 + world.snow * 3 + hash2(tx, 5) * 1.2); }
+  }
   plants(world, g, t) {
     const z = this.cam.zoom;
     for (const p of world.plants) {
       const bx = p.x * TS + TS / 2, by = world.surface[p.x] * TS, h = world.plantHeight(p);
       const sway = Math.sin(t * 1.3 + p.x) * (1 + world.wind) * h * 0.06;
       const ripe = p.b / p.max;
-      g.strokeStyle = `hsl(${p.hue},45%,${26 + ripe * 8}%)`; g.lineWidth = 1 + p.h * 0.4;
+      const autumn = clamp((13 - world.temp) / 13, 0, 1), tox = p.tox || 0;
+      let hue = p.hue + (35 - p.hue) * autumn * 0.8; hue = hue + (285 - hue) * Math.min(1, tox * 0.9);
+      const sat = 45 - autumn * 15;
+      g.strokeStyle = `hsl(${hue},${sat}%,${26 + ripe * 8}%)`; g.lineWidth = 1 + p.h * 0.4;
       g.beginPath(); g.moveTo(bx, by); g.quadraticCurveTo(bx + sway * 0.3, by - h * 0.6, bx + sway, by - h); g.stroke();
       const n = Math.min(8, 2 + Math.floor(p.b / 3));
       for (let i = 0; i < n; i++) {
         const f = (i + 1) / (n + 1), lx = bx + sway * f * f, ly = by - h * f, side = i % 2 ? 1 : -1;
-        g.fillStyle = `hsl(${p.hue + (i % 3) * 6},${50 + ripe * 15}%,${30 + f * 14}%)`;
+        g.fillStyle = `hsl(${hue + (i % 3) * 6},${sat + 5 + ripe * 15}%,${30 + f * 14 - tox * 8}%)`;
         g.beginPath(); g.ellipse(lx + side * 3.2, ly, 3.6, 1.6, side * 0.5 + sway * 0.05, 0, 6.283); g.fill();
       }
       if (ripe > 0.6) {
-        g.fillStyle = `hsl(${p.berry},75%,55%)`;
+        g.fillStyle = tox > 0.3 ? `hsl(280,70%,${45 + tox * 10}%)` : `hsl(${p.berry},75%,55%)`;
         const k = Math.floor((ripe - 0.6) * 10) + 1;
         for (let i = 0; i < k; i++) { g.beginPath(); g.arc(bx + sway + Math.sin(i * 2.4) * 2.5, by - h + 1 + Math.cos(i * 2.4) * 2, 1.3, 0, 6.283); g.fill(); }
       }

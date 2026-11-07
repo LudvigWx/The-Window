@@ -129,7 +129,8 @@ function camera(rdt) {
 setInterval(() => {
   if (!world) return;
   const alive = world.creatures.filter(c => c.alive).length;
-  $('#clock').innerHTML = `${fmtT(world.time)}<small>${['Natt', 'Gryning', 'Dag', 'Skymning'][phase()]} · ${alive} lever · gen ${world.maxGen}</small>`;
+  const wx = world.weather && world.weather.rain > 0 ? (world.temp < 0 ? ' · snö' : ' · regn') : '';
+  $('#clock').innerHTML = `${fmtT(world.time)}<small>${world.season()} ${Math.round(world.temp)}°${wx} · ${alive} lever</small>`;
   if (++chipTick % 8 === 0) refreshChipLabels(alive);
   if (!$('#people').classList.contains('hidden') && chipTick % 4 === 0) renderPeople();
   const rs = effWin.reduce((a, b) => a + b[0], 0), ss = effWin.reduce((a, b) => a + b[1], 0), eff = rs ? ss / rs : 0;
@@ -194,7 +195,7 @@ function refreshChipLabels(alive) { const b = $('#peopleChip'); if (b) b.textCon
 function closePanels() { ['#chron', '#menu', '#people', '#lex'].forEach(s => $(s).classList.add('hidden')); }
 function renderPeople() {
   const al = world.creatures.filter(c => c.alive).sort((a, b) => b.gen - a.gen || a.age - b.age);
-  $('#peopleTitle').textContent = `Alla som lever (${al.length})`;
+  $('#peopleTitle').textContent = `Alla som lever (${al.length}) · generation ${world.maxGen}`;
   $('#peopleList').innerHTML = al.map(c => `<div class="prow" data-id="${c.id}"><span class="dot" style="background:hsl(${c.g.hue},55%,55%)"></span><div><b>${esc(c.name)}</b>${c.size < 1 ? ' · ung' : ''}<div class="meta">Generation ${c.gen} · ${world.fmtAge(c.age)} · ${c.kids} barn${c.pnames ? ' · barn till ' + esc(c.pnames.join(' och ')) : ''}</div></div></div>`).join('') +
     `<p class="meta" style="color:var(--dim);font-size:12px;margin-top:12px">${world.births} har fötts i dalen. ${world.dead.length + world.creatures.filter(c => !c.alive).length} har dött.</p>`;
   document.querySelectorAll('#peopleList .prow').forEach(r => r.onclick = () => { const c = world.creatures.find(z => z.id === +r.dataset.id); if (c) { closePanels(); select(c); } });
@@ -205,7 +206,7 @@ function refreshChips() { document.querySelectorAll('#chips .chip').forEach(b =>
 // ---------- kortet om en varelse ----------
 $('#cClose').onclick = () => { $('#card').classList.add('hidden'); sel = null; follow = null; refreshChips(); };
 $('#brainBtn').onclick = () => { showBrain = !showBrain; $('#brainCv').classList.toggle('hidden', !showBrain); $('#brainBtn').textContent = showBrain ? '🧠 Dölj hjärnan' : '🧠 Visa hjärnan'; updCard(); };
-function doing(c) { if (!c.alive) return 'Lever inte längre'; if (c.eating > 0.5) return 'Äter'; if (c.digP > 0) return 'Gräver'; if (c.say && world.time - c.say.t < 0.6) return 'Låter: "' + c.say.txt + '"'; if (c.size < 1 && c.age < 0.05 * DAY) return 'Har precis fötts'; if (world.waterAt(c.x, c.y - c.h * 0.5)) return 'Simmar'; if (!c.grounded) return 'Hoppar'; if (Math.abs(c.vx) > 4) return 'Går'; return 'Står still'; }
+function doing(c) { if (!c.alive) return 'Lever inte längre'; if (c.eating > 0.5) return 'Äter'; if (c.digP > 0) return 'Gräver'; if (c.touchW && c.out[2] > 0 && c.hyd < 99) return 'Dricker'; if (c.say && world.time - c.say.t < 0.6) return 'Låter: "' + c.say.txt + '"'; if (c.size < 1 && c.age < 0.05 * DAY) return 'Har precis fötts'; if (world.waterAt(c.x, c.y - c.h * 0.5)) return 'Simmar'; if (!c.grounded) return 'Hoppar'; if (Math.abs(c.vx) > 4) return 'Går'; return 'Står still'; }
 function seeing(c) {
   if (!c.alive) return '–'; const h = Array.from(c.rayHit);
   if (h.includes(3)) { const o = world.creatures.find(z => z.id === c.seenId); return o ? o.name : 'en varelse'; }
@@ -215,8 +216,9 @@ function updCard() {
   const c = sel; if (!c || $('#card').classList.contains('hidden') || !world) return;
   $('#cName').textContent = c.name + (c.alive ? '' : ' †'); $('#cTag').textContent = (c.gen === 1 ? 'Stamförälder' : 'Generation ' + c.gen) + (c.size < 1 ? ' · ung' : '');
   $('#cEn').style.width = clamp(c.energy / 120 * 100, 0, 100) + '%'; $('#cEnT').textContent = Math.max(0, Math.round(c.energy)) + ' / 120';
+  const feel = []; if (c.hyd < 50) feel.push(c.hyd < 15 ? 'mycket törstig' : 'törstig'); if (c.cold > 2) feel.push(c.cold > 6 ? 'fryser mycket' : 'fryser'); if (c.sick > 0.2) feel.push('mår illa'); if (c.energy < 30) feel.push('hungrig');
   const G = c.g;
-  $('#cInfo').innerHTML = `Gör just nu: <b>${doing(c)}</b><br>Ser: <b>${esc(seeing(c))}</b><br>Ålder: <b>${world.fmtAge(c.age)}</b> · Måltider: <b>${c.meals}</b><br>` +
+  $('#cInfo').innerHTML = `Gör just nu: <b>${doing(c)}</b>${feel.length ? ` · Känner sig <b>${feel.join(', ')}</b>` : ''}<br>Ser: <b>${esc(seeing(c))}</b><br>Ålder: <b>${world.fmtAge(c.age)}</b> · Måltider: <b>${c.meals}</b><br>` +
     `Barn: <b>${c.kids}</b>${c.pnames ? ` · Föräldrar: <b>${esc(c.pnames.join(' och '))}</b>` : ''}${c.age < ADULT ? ' · <b>för ung för att få barn</b>' : ''}<br>` +
     [c.say ? `Senast sa: <b>"${esc(c.say.txt)}"</b>` : 'Har aldrig låtit', c.carry ? `Bär: <b>${MAT[c.carry]}</b>` : '', c.builds ? `Har byggt ${c.builds} gånger` : ''].filter(Boolean).join(' · ') + '<br>' +
     `Kropp: ${G.seg} segment, ${G.legs} benpar${G.tail ? ', svans' : ''}${G.ant ? ', antenner' : ''}<br>Hjärna: ${c.br.H} neuroner, lär sig av belöning och smärta`;
