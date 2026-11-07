@@ -4,6 +4,7 @@
 // =====================================================================
 
 class Renderer {
+  static COL = { 1: [118, 84, 58], 2: [118, 84, 58], 3: [104, 104, 114], 4: [204, 180, 122], 6: [150, 96, 74] };
   constructor(canvas) {
     this.cv = canvas; this.g = canvas.getContext('2d');
     this.cam = { x: 0, y: 0, zoom: 2 };
@@ -24,7 +25,7 @@ class Renderer {
   buildTerrain(world) {
     const pw = WW * TS, ph = WH * TS;
     const c = document.createElement('canvas'); c.width = pw; c.height = ph;
-    const g = c.getContext('2d'), img = g.createImageData(pw, ph), d = img.data;
+    const g = c.getContext('2d'), img = g.createImageData(pw, ph);
     // avstånd till luft (för att mörka ner djupt under jord)
     const depth = new Uint8Array(WW * WH).fill(255), q = [];
     for (let y = 0; y < WH; y++) for (let x = 0; x < WW; x++) { const t = world.tiles[y * WW + x]; if (t === T.AIR || t === T.WATER) { depth[y * WW + x] = 0; q.push(x, y); } }
@@ -36,36 +37,64 @@ class Renderer {
         const k = ny * WW + nx; if (depth[k] > dv + 1) { depth[k] = dv + 1; q.push(nx, ny); }
       }
     }
-    const COL = { 1: [118, 84, 58], 2: [118, 84, 58], 3: [104, 104, 114], 4: [204, 180, 122], 6: [150, 96, 74] };
-    for (let ty = 0; ty < WH; ty++) for (let tx = 0; tx < WW; tx++) {
-      const t = world.tiles[ty * WW + tx];
-      if (t === T.AIR || t === T.WATER) {
-        if (ty <= world.surface[tx]) continue;
-        // grottans bakvägg: mörk sten, så att man inte ser himlen genom berget
-        for (let py = 0; py < TS; py++) for (let px = 0; px < TS; px++) { const X = tx * TS + px, Y = ty * TS + py, n = (hash2(X, Y) - 0.5) * 10, o = (Y * pw + X) * 4; d[o] = 30 + n; d[o + 1] = 27 + n; d[o + 2] = 34 + n; d[o + 3] = 255; }
-        continue;
-      }
-      const base = COL[t], dep = depth[ty * WW + tx], shade = 1 - Math.min(dep, 10) / 10 * 0.78;
-      for (let py = 0; py < TS; py++) for (let px = 0; px < TS; px++) {
-        const X = tx * TS + px, Y = ty * TS + py, n = hash2(X, Y);
-        let r = base[0], gg = base[1], b = base[2];
-        const v = (n - 0.5) * (t === T.STONE ? 26 : 20);
-        r += v; gg += v; b += v;
-        if (t === T.STONE && hash2(X >> 1, Y >> 1) > 0.92) { r += 22; gg += 22; b += 26; } // ådror
-        if ((t === T.DIRT || t === T.GRASS) && hash2(X >> 1, Y >> 1) > 0.95) { r -= 25; gg -= 22; b -= 20; } // småsten
-        if (t === T.GRASS && py < 3 - (hash2(X, 99) * 2 | 0)) { r = 72 + v; gg = 140 + v * 1.4; b = 58 + v; }
-        const o = (Y * pw + X) * 4; d[o] = r * shade; d[o + 1] = gg * shade; d[o + 2] = b * shade; d[o + 3] = 255;
-      }
-      // grässtrån upp i luften ovanför
-      if (t === T.GRASS && ty > 0 && world.tiles[(ty - 1) * WW + tx] === T.AIR) {
-        for (let px = 0; px < TS; px++) {
-          const X = tx * TS + px, hgt = (hash2(X, 7) * 4) | 0;
-          for (let k = 1; k <= hgt; k++) { const Y = ty * TS - k; if (Y < 0) break; const o = (Y * pw + X) * 4; const gv = 120 + hash2(X, k) * 50; d[o] = 60; d[o + 1] = gv; d[o + 2] = 50; d[o + 3] = 255; }
-        }
+    for (let ty = 0; ty < WH; ty++) for (let tx = 0; tx < WW; tx++) this.paintTile(world, img.data, tx, ty, depth[ty * WW + tx]);
+    g.putImageData(img, 0, 0);
+    this.terrain = c; this.tctx = g; this.timg = img; this.terrainVer = world.terrainVersion;
+    world.dirty.length = 0;
+  }
+  paintTile(world, d, tx, ty, dep) {
+    const pw = WW * TS, t = world.tiles[ty * WW + tx];
+    const COL = Renderer.COL;
+    if (t === T.AIR || t === T.WATER) {
+      const back = ty > world.surface[tx]; // under ytan: grottans mörka bakvägg, annars genomskinligt
+      for (let py = 0; py < TS; py++) for (let px = 0; px < TS; px++) { const X = tx * TS + px, Y = ty * TS + py, o = (Y * pw + X) * 4; if (back) { const n = (hash2(X, Y) - 0.5) * 10; d[o] = 30 + n; d[o + 1] = 27 + n; d[o + 2] = 34 + n; d[o + 3] = 255; } else d[o + 3] = 0; }
+      return;
+    }
+    const base = COL[t], shade = 1 - Math.min(dep, 10) / 10 * 0.78;
+    for (let py = 0; py < TS; py++) for (let px = 0; px < TS; px++) {
+      const X = tx * TS + px, Y = ty * TS + py, n = hash2(X, Y);
+      let r = base[0], gg = base[1], b = base[2];
+      const v = (n - 0.5) * (t === T.STONE ? 26 : 20);
+      r += v; gg += v; b += v;
+      if (t === T.STONE && hash2(X >> 1, Y >> 1) > 0.92) { r += 22; gg += 22; b += 26; } // ådror
+      if ((t === T.DIRT || t === T.GRASS) && hash2(X >> 1, Y >> 1) > 0.95) { r -= 25; gg -= 22; b -= 20; } // småsten
+      if (t === T.GRASS && py < 3 - (hash2(X, 99) * 2 | 0)) { r = 72 + v; gg = 140 + v * 1.4; b = 58 + v; }
+      const o = (Y * pw + X) * 4; d[o] = r * shade; d[o + 1] = gg * shade; d[o + 2] = b * shade; d[o + 3] = 255;
+    }
+    // grässtrån upp i luften ovanför
+    if (t === T.GRASS && ty > 0 && world.tiles[(ty - 1) * WW + tx] === T.AIR) {
+      for (let px = 0; px < TS; px++) {
+        const X = tx * TS + px, hgt = (hash2(X, 7) * 4) | 0;
+        for (let k = 1; k <= hgt; k++) { const Y = ty * TS - k; if (Y < 0) break; const o = (Y * pw + X) * 4; const gv = 120 + hash2(X, k) * 50; d[o] = 60; d[o + 1] = gv; d[o + 2] = 50; d[o + 3] = 255; }
       }
     }
-    g.putImageData(img, 0, 0);
-    this.terrain = c; this.terrainVer = world.terrainVersion;
+  }
+  localDepth(world, tx, ty) {
+    const open = (x, y) => { const t = world.tile(x, y); return t === T.AIR || t === T.WATER; };
+    if (open(tx, ty)) return 0;
+    for (let r = 1; r <= 10; r++) for (let dx = -r; dx <= r; dx++) { const dy = r - Math.abs(dx); if (open(tx + dx, ty + dy) || open(tx + dx, ty - dy)) return r; }
+    return 10;
+  }
+  // måla bara om de rutor som varelserna har grävt eller byggt i
+  repaint(world) {
+    const dl = world.dirty; if (!dl.length) return;
+    if (dl.length > 600) { this.buildTerrain(world); return; }
+    const done = new Set();
+    for (let i = 0; i < dl.length; i += 2) {
+      const cx = dl[i], cy = dl[i + 1];
+      for (let ty = Math.max(0, cy - 2); ty <= Math.min(WH - 1, cy + 2); ty++) for (let k = -2; k <= 2; k++) {
+        const tx = wrapT(cx + k), key = ty * WW + tx; if (done.has(key)) continue; done.add(key);
+        this.paintTile(world, this.timg.data, tx, ty, this.localDepth(world, tx, ty));
+      }
+    }
+    // lägg tillbaka strån från gräsrutor precis under det omålade området
+    for (const key of done) { const tx = key % WW, ty = (key / WW) | 0; if (ty + 1 < WH && !done.has(key + WW) && world.tiles[key + WW] === T.GRASS) this.paintTile(world, this.timg.data, tx, ty + 1, this.localDepth(world, tx, ty + 1)); }
+    let x0 = WW, x1 = -1, y0 = WH, y1 = -1;
+    for (const key of done) { const tx = key % WW, ty = (key / WW) | 0; x0 = Math.min(x0, tx); x1 = Math.max(x1, tx); y0 = Math.min(y0, ty); y1 = Math.max(y1, ty + 1); }
+    if (x1 - x0 > WW / 2) { x0 = 0; x1 = WW - 1; }
+    y0 = Math.max(0, y0 - 1);
+    this.tctx.putImageData(this.timg, 0, 0, x0 * TS, y0 * TS, (x1 - x0 + 1) * TS, (Math.min(WH, y1 + 1) - y0) * TS);
+    dl.length = 0;
   }
 
   // ---------- himmel ----------
@@ -114,6 +143,7 @@ class Renderer {
     this.alpha = alpha;
     const g = this.g, z = this.cam.zoom, dpr = this.dpr;
     if (!this.terrain || this.terrainVer !== world.terrainVersion) this.buildTerrain(world);
+    else this.repaint(world);
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.sky(world);
     const ox = this.W / 2 - this.cam.x * z, oy = this.H / 2 - this.cam.y * z;
@@ -136,6 +166,13 @@ class Renderer {
       const [ix, iy] = this.ipos(c), x = this.cam.x + wrapD(ix - this.cam.x);
       if (c.alive) this.creature(c, x, iy, g, t, c === sel); else this.corpse(c, x, iy, g);
     }
+    // ljudvågor från den som låter
+    for (const sd of world.sounds) {
+      const age = world.time - sd.t; if (age > 0.5 || age < 0) continue;
+      const x = this.cam.x + wrapD(sd.x - this.cam.x);
+      g.strokeStyle = `hsla(${200 + sd.p * 120},80%,75%,${(1 - age / 0.5) * 0.6})`; g.lineWidth = 0.8;
+      for (const k of [0, 0.4]) { const r = 3 + (age + k * 0.2) * 55; g.beginPath(); g.arc(x, sd.y, r, -0.9, 0.9); g.stroke(); g.beginPath(); g.arc(x, sd.y, r, Math.PI - 0.9, Math.PI + 0.9); g.stroke(); }
+    }
     // partiklar
     for (const p of this.particles) { p.x += p.vx * rdt; p.y += p.vy * rdt; p.vy += 120 * rdt; p.life -= rdt; g.fillStyle = `hsla(${p.h},60%,55%,${Math.max(0, p.life)})`; g.fillRect(this.cam.x + wrapD(p.x - this.cam.x), p.y, p.s, p.s); }
     this.particles = this.particles.filter(p => p.life > 0);
@@ -147,6 +184,19 @@ class Renderer {
     g.setTransform(dpr * z, 0, 0, dpr * z, ox * dpr, oy * dpr);
     if (nightA > 0.15) for (const c of world.creatures) if (c.alive) { const [ix, iy] = this.ipos(c), [ex0, ey0] = this.eyePos(c), ex = ex0 + wrapD(ix - c.x), ey = ey0 + iy - c.y; const x = this.cam.x + wrapD(ex - this.cam.x); g.fillStyle = `rgba(255,240,180,${nightA * 0.8})`; g.beginPath(); g.arc(x, ey, c.g.eye * 0.6, 0, 6.283); g.fill(); }
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // pratbubblor: det de säger, skrivet som stavelser
+    if (this.cam.zoom >= 1.6) for (const c of world.creatures) {
+      if (!c.alive || !c.say || world.time - c.say.t > 2.5 || world.time < c.say.t) continue;
+      const [ix, iy] = this.ipos(c), [sx, sy] = this.toScreen(ix, iy - c.h - 6);
+      if (sx < -80 || sx > this.W + 80) continue;
+      const a = Math.min(1, (2.5 - (world.time - c.say.t)) * 2);
+      g.font = '600 12px system-ui, sans-serif'; g.textAlign = 'center';
+      const txt = c.say.txt, tw = g.measureText(txt).width + 14, bx = sx - tw / 2, by = sy - 40;
+      g.globalAlpha = a; g.fillStyle = 'rgba(250,247,238,0.94)';
+      g.beginPath(); g.moveTo(bx + 8, by); g.arcTo(bx + tw, by, bx + tw, by + 20, 8); g.arcTo(bx + tw, by + 20, bx, by + 20, 8); g.arcTo(bx, by + 20, bx, by, 8); g.arcTo(bx, by, bx + tw, by, 8); g.closePath(); g.fill();
+      g.beginPath(); g.moveTo(sx - 4, by + 20); g.lineTo(sx, by + 26); g.lineTo(sx + 4, by + 20); g.fill();
+      g.fillStyle = '#2a2236'; g.fillText(txt, sx, by + 14); g.globalAlpha = 1;
+    }
     for (const c of world.creatures) {
       if (c !== sel && (!c.alive || this.cam.zoom < 2.6)) continue; // namn bara när man är nära, så att det inte blir rörigt
       const [ix, iy] = this.ipos(c), [sx, sy] = this.toScreen(ix, iy - c.h - 6);
@@ -229,7 +279,8 @@ class Renderer {
     const open = c.blink < 0 ? 0.15 : 1;
     g.fillStyle = '#fbfaf5'; g.beginPath(); g.ellipse(ex, ey, G.eye, G.eye * open, 0, 0, 6.283); g.fill();
     if (open > 0.5) { g.fillStyle = '#16121c'; g.beginPath(); g.arc(ex + G.eye * 0.35, ey + (c.vy > 50 ? 0.6 : 0), G.eye * 0.5, 0, 6.283); g.fill(); g.fillStyle = '#fff'; g.beginPath(); g.arc(ex + G.eye * 0.5, ey - G.eye * 0.25, G.eye * 0.16, 0, 6.283); g.fill(); }
-    const mo = c.eating > 0 ? 0.8 + Math.sin(t * 18) * 0.6 : 0.2;
+    if (c.carry) { const col = Renderer.COL[c.carry] || [120, 90, 60]; g.fillStyle = `rgb(${col})`; g.fillRect(hx + hr * 0.9, bodyY + G.segH * 0.05, 3.2, 3.2); }
+    const mo = c.eating > 0 ? 0.8 + Math.sin(t * 18) * 0.6 : c.say && t - c.say.t < 0.3 ? 1.2 : 0.2;
     g.fillStyle = col(22); g.beginPath(); g.ellipse(hx + hr * 0.85, bodyY + G.segH * 0.18, 1.2, mo, 0, 0, 6.283); g.fill();
     g.restore();
     if (c.eating > 0.9 && Math.random() < 0.3) this.particles.push({ x: c.x + c.face * (c.w / 2 + 3), y: c.y - 4, vx: (Math.random() - 0.5) * 20, vy: -20 - Math.random() * 20, life: 0.6, h: 110, s: 1 });

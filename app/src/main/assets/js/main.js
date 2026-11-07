@@ -115,6 +115,7 @@ function frame(ts) {
     const alpha = (!busy && !paused) ? clamp(simAcc / DT, 0, 1) : 1;
     ren.alpha = alpha; camera(rdt);
     ren.draw(world, sel, rdt, alpha);
+    playVoices();
   }
   requestAnimationFrame(frame);
 }
@@ -136,6 +137,7 @@ setInterval(() => {
   $('#spdV').textContent = paused ? 'Pausad' : (eff < speed * 0.8 && speed > 2 ? `${f(eff)} (max)` : f(speed));
   updCard(); renderFeed();
   if (!$('#chron').classList.contains('hidden')) renderChron();
+  if (!$('#lex').classList.contains('hidden') && chipTick % 8 === 0) renderLex();
   $('#menuStats').textContent = `Dalen har funnits i ${world.fmtAge(world.time)}. ${world.plants.length} växter.`;
 }, 250);
 function phase() { const s = world.sunHeight(); return s < -0.2 ? 0 : s < 0.2 ? (world.dayFrac() < 0.5 ? 1 : 3) : 2; }
@@ -180,7 +182,7 @@ function select(c) { sel = follow = c; if (ren.cam.zoom < 2) ren.cam.zoom = Math
 let chipTick = 0;
 function buildChips() {
   const box = $('#chips'); box.innerHTML = '';
-  const all2 = document.createElement('button'); all2.className = 'chip glass'; all2.id = 'peopleChip'; all2.textContent = '👪 Alla';
+  const all2 = document.createElement('button'); all2.className = 'chip glass'; all2.id = 'peopleChip'; all2.textContent = `👪 Alla (${world.creatures.filter(c => c.alive).length})`;
   all2.onclick = () => { const was = $('#people').classList.contains('hidden'); closePanels(); $('#people').classList.toggle('hidden', !was); if (was) renderPeople(); };
   box.appendChild(all2);
   for (const c of world.creatures.filter(c => c.gen === 1)) { const b = document.createElement('button'); b.className = 'chip glass'; b.dataset.id = c.id; b.innerHTML = `<span class="dot" style="background:hsl(${c.g.hue},55%,55%)"></span>${esc(c.name)}${c.alive ? '' : ' †'}`; b.onclick = () => select(c); box.appendChild(b); }
@@ -189,7 +191,7 @@ function buildChips() {
   box.appendChild(all); refreshChips();
 }
 function refreshChipLabels(alive) { const b = $('#peopleChip'); if (b) b.textContent = `👪 Alla (${alive})`; }
-function closePanels() { ['#chron', '#menu', '#people'].forEach(s => $(s).classList.add('hidden')); }
+function closePanels() { ['#chron', '#menu', '#people', '#lex'].forEach(s => $(s).classList.add('hidden')); }
 function renderPeople() {
   const al = world.creatures.filter(c => c.alive).sort((a, b) => b.gen - a.gen || a.age - b.age);
   $('#peopleTitle').textContent = `Alla som lever (${al.length})`;
@@ -203,7 +205,7 @@ function refreshChips() { document.querySelectorAll('#chips .chip').forEach(b =>
 // ---------- kortet om en varelse ----------
 $('#cClose').onclick = () => { $('#card').classList.add('hidden'); sel = null; follow = null; refreshChips(); };
 $('#brainBtn').onclick = () => { showBrain = !showBrain; $('#brainCv').classList.toggle('hidden', !showBrain); $('#brainBtn').textContent = showBrain ? '🧠 Dölj hjärnan' : '🧠 Visa hjärnan'; updCard(); };
-function doing(c) { if (!c.alive) return 'Lever inte längre'; if (c.eating > 0.5) return 'Äter'; if (c.size < 1 && c.age < 0.05 * DAY) return 'Har precis fötts'; if (world.waterAt(c.x, c.y - c.h * 0.5)) return 'Simmar'; if (!c.grounded) return 'Hoppar'; if (Math.abs(c.vx) > 4) return 'Går'; return 'Står still'; }
+function doing(c) { if (!c.alive) return 'Lever inte längre'; if (c.eating > 0.5) return 'Äter'; if (c.digP > 0) return 'Gräver'; if (c.say && world.time - c.say.t < 0.6) return 'Låter: "' + c.say.txt + '"'; if (c.size < 1 && c.age < 0.05 * DAY) return 'Har precis fötts'; if (world.waterAt(c.x, c.y - c.h * 0.5)) return 'Simmar'; if (!c.grounded) return 'Hoppar'; if (Math.abs(c.vx) > 4) return 'Går'; return 'Står still'; }
 function seeing(c) {
   if (!c.alive) return '–'; const h = Array.from(c.rayHit);
   if (h.includes(3)) { const o = world.creatures.find(z => z.id === c.seenId); return o ? o.name : 'en varelse'; }
@@ -216,6 +218,7 @@ function updCard() {
   const G = c.g;
   $('#cInfo').innerHTML = `Gör just nu: <b>${doing(c)}</b><br>Ser: <b>${esc(seeing(c))}</b><br>Ålder: <b>${world.fmtAge(c.age)}</b> · Måltider: <b>${c.meals}</b><br>` +
     `Barn: <b>${c.kids}</b>${c.pnames ? ` · Föräldrar: <b>${esc(c.pnames.join(' och '))}</b>` : ''}${c.age < ADULT ? ' · <b>för ung för att få barn</b>' : ''}<br>` +
+    [c.say ? `Senast sa: <b>"${esc(c.say.txt)}"</b>` : 'Har aldrig låtit', c.carry ? `Bär: <b>${MAT[c.carry]}</b>` : '', c.builds ? `Har byggt ${c.builds} gånger` : ''].filter(Boolean).join(' · ') + '<br>' +
     `Kropp: ${G.seg} segment, ${G.legs} benpar${G.tail ? ', svans' : ''}${G.ant ? ', antenner' : ''}<br>Hjärna: ${c.br.H} neuroner, lär sig av belöning och smärta`;
   if (showBrain) drawBrain(c);
 }
@@ -249,6 +252,49 @@ $('#menuClose').onclick = () => $('#menu').classList.add('hidden');
 $('#newWorldBtn').onclick = () => $('#confirmNew').classList.remove('hidden');
 $('#confirmNo').onclick = () => $('#confirmNew').classList.add('hidden');
 $('#confirmYes').onclick = () => { store.wipe(); world = null; sel = follow = null; $('#menu').classList.add('hidden'); $('#card').classList.add('hidden'); $('#chips').innerHTML = ''; showIntro(); };
+
+// ---------- ordboken ----------
+function renderLex() {
+  const words = Object.entries(world.lex).sort((a, b) => b[1].n - a[1].n);
+  const withMeaning = words.filter(([w]) => world.meaning(w));
+  let html = `<p>${words.length} olika ljudföljder har hörts, ${world.uttTot} gånger totalt. ${withMeaning.length ? `Översättaren har en gissning för ${withMeaning.length} av dem.` : 'Översättaren har ingen gissning än.'}</p>` +
+    `<p style="color:var(--dim);font-size:12px">Gissningarna bygger bara på statistik: ett ord får en betydelse om det sägs i en viss situation mycket oftare än andra ljud. Det betyder inte att de "menar" något – men det är så språk brukar börja.</p>`;
+  html += words.slice(0, 50).map(([w, e]) => { const m = world.meaning(w); return `<div><b>"${esc(w)}"</b> · ${e.n} gånger · ${e.sp.length} ${e.sp.length === 1 ? 'talare' : 'talare'}<em>${m ? `Sägs troligen ${m.label} (${Math.round(m.p * 100)} %)` : 'Betydelse okänd'} · först sagt av ${esc(e.by)}</em></div>`; }).join('');
+  $('#lexList').innerHTML = html || '<p>Ingen har låtit än.</p>';
+}
+$('#lexBtn').onclick = () => { const was = $('#lex').classList.contains('hidden'); closePanels(); $('#lex').classList.toggle('hidden', !was); if (was) renderLex(); };
+$('#lexClose').onclick = () => $('#lex').classList.add('hidden');
+
+// ---------- ljud: varelsernas röster ----------
+let actx = null, soundOn = false, lastSoundT = 0, voiceWin = [];
+function setSound(on) {
+  soundOn = on; $('#soundBtn').textContent = on ? '🔊' : '🔇';
+  if (on) { try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (e) { soundOn = false; } }
+  try { localStorage.setItem('thewindow-sound', on ? '1' : '0'); } catch (e) { }
+}
+$('#soundBtn').onclick = () => setSound(!soundOn);
+function voice(sd, pan) {
+  const t = actx.currentTime, o = actx.createOscillator(), f = actx.createBiquadFilter(), g = actx.createGain();
+  const base = 170 * Math.pow(2, (sd.p + 1) * 1.3) / Math.sqrt(Math.max(0.4, sd.size));
+  o.type = 'triangle'; o.frequency.setValueAtTime(base, t); o.frequency.linearRampToValueAtTime(base * (1.04 + sd.p * 0.03), t + 0.12);
+  f.type = 'bandpass'; f.frequency.value = 600 + (sd.timbre / 360) * 1800; f.Q.value = 2.5;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.16, t + 0.012); g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+  o.connect(f); f.connect(g);
+  if (actx.createStereoPanner) { const p = actx.createStereoPanner(); p.pan.value = clamp(pan, -1, 1); g.connect(p); p.connect(actx.destination); } else g.connect(actx.destination);
+  o.start(t); o.stop(t + 0.22);
+}
+function playVoices() {
+  if (!world) return;
+  if (!soundOn || !actx || busy || paused || speed > 6 || ren.cam.zoom < 1.6) { lastSoundT = world.time; return; }
+  const now = performance.now(); voiceWin = voiceWin.filter(x => now - x < 500);
+  for (const sd of world.sounds) {
+    if (sd.t <= lastSoundT || voiceWin.length >= 10) continue;
+    const [sx, sy] = ren.toScreen(sd.x, sd.y); if (sx < -40 || sx > ren.W + 40 || sy < -40 || sy > ren.H + 40) continue;
+    voice(sd, sx / ren.W * 2 - 1); voiceWin.push(now);
+  }
+  lastSoundT = world.time;
+}
+try { if (localStorage.getItem('thewindow-sound') === '1') setSound(true); } catch (e) { }
 
 boot();
 requestAnimationFrame(frame);
