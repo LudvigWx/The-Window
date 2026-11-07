@@ -77,6 +77,7 @@ class World {
     this.fert = new Float32Array(WW).fill(1); // näring i jorden, per kolumn
     this.bins = Array.from({ length: WW }, () => []);
     this.dead = []; this.maxGen = 1; this.births = 0; this.aliveCount = 0; this.popHist = [];
+    this.hist = []; this.histAcc = 0; this.causes = {}; this.iv = { births: 0, deaths: {}, utt: 0, digs: 0 }; this.founders = null;
     this.moist = new Float32Array(WW).fill(0.6); this.weather = { rain: 0, until: 0, next: 0.3 * DAY }; this.snow = 0; this.temp = 12; this.waterAcc = 0;
     this.wpos = null; this.wlist = [];
     this.sounds = []; this.lex = {}; this.ctxTot = {}; this.uttTot = 0; this.dirty = []; this.stats = { digs: 0, builds: 0, gifts: 0 };
@@ -328,6 +329,7 @@ class World {
       const br = e ? { H: e.br.H, wih: Float32Array.from(e.br.wih), whh: Float32Array.from(e.br.whh), bh: Float32Array.from(e.br.bh), who: Float32Array.from(e.br.who), bo: Float32Array.from(e.br.bo) } : this.makeBrain(g);
       const c = this.makeCreature(n, xs[i], g, br, 1, null); c.energy = 120;
     });
+    this.founders = this.creatures.map(c => ({ id: c.id, name: c.name, g: { ...c.g }, H: c.br.H }));
     this.chron(`${names[0]} och ${names[1]} öppnar ögonen för första gången.`);
   }
 
@@ -561,7 +563,7 @@ class World {
         const key = tgt[1] * WW + tgt[0]; if (key !== c.digKey) { c.digKey = key; c.digP = 0; }
         c.digP += dt / HARD[tgt[2]]; c.energy -= 0.25 * dt;
         if (c.digP >= 1) {
-          this.setTileLive(tgt[0], tgt[1], T.AIR); c.digP = 0; c.digKey = -1; this.stats.digs++;
+          this.setTileLive(tgt[0], tgt[1], T.AIR); c.digP = 0; c.digKey = -1; this.stats.digs++; this.iv.digs++;
           if (!c.carry && c.out[3] > 0) { c.carry = tgt[2] === T.GRASS ? T.DIRT : tgt[2]; this.first('carry', `${c.name} bär med sig ${MAT[c.carry]} i munnen.`); }
           this.first('dig', `${c.name} gräver bort en bit ${MAT[tgt[2]]}. Det är första gången någon förändrar dalen.`);
         }
@@ -614,17 +616,36 @@ class World {
       // smärta gör ont, och ansträngning känns lite. Inget beteende är förprogrammerat.
       const hunger = 1 - clamp(c.energy / 120, 0, 1), cost = (c.energy - e0) - (c.gain - gi);
       c.lastReward = c.gain * (1 + 2 * hunger) + c.drinkR - Math.max(0, c.pain - p0) * 6 + cost * 0.05;
-      if (c.energy <= 0) this.die(c, c.hyd <= 0 ? `har dött av törst, ${this.fmtAge(c.age)} gammal` : c.cold > 5 ? `har frusit ihjäl, ${this.fmtAge(c.age)} gammal` : `har somnat in av hunger, ${this.fmtAge(c.age)} gammal`);
-      else if (c.age > c.g.maxAge) this.die(c, `har dött av ålder, ${this.fmtAge(c.age)} gammal`);
+      if (c.energy <= 0) {
+        const cause = c.hyd <= 0 ? 'thirst' : c.cold > 5 ? 'cold' : c.sick > 0.3 ? 'poison' : 'hunger';
+        this.die(c, { thirst: 'har dött av törst', cold: 'har frusit ihjäl', poison: 'har dött efter att ha ätit gift', hunger: 'har somnat in av hunger' }[cause] + `, ${this.fmtAge(c.age)} gammal`, cause);
+      } else if (c.age > c.g.maxAge) this.die(c, `har dött av ålder, ${this.fmtAge(c.age)} gammal`, 'age');
     }
     const [a, b] = this.creatures;
     if (a && b && a.gen === 1 && b.gen === 1 && a.alive && b.alive && Math.abs(wrapD(a.x - b.x)) < (a.w + b.w) / 2 + 4 && Math.abs(a.y - b.y) < 12) this.first('meet', `${a.name} och ${b.name} möts för första gången.`);
+    this.histAcc += DT; if (this.histAcc >= 300) { this.histAcc = 0; this.recordHist(); }
     const d = this.dayNumber(); if (d !== this.lastDay) { if (this.lastDay && this.aliveCount > 0 && this.aliveCount <= 6) this.chron(`Dag ${d} gryr i dalen.`); this.lastDay = d; this.popHist.push([this.time, this.aliveCount, this.maxGen]); if (this.popHist.length > 400) this.popHist.shift(); }
   }
 
+  // ---------- dalens historia: en mätpunkt var sjätte timme ----------
+  recordHist() {
+    const al = this.creatures.filter(c => c.alive), n = al.length || 1, avg = f => al.reduce((a, c) => a + f(c), 0) / n;
+    const pl = this.plants.length || 1;
+    this.hist.push({
+      t: this.time, pop: al.length, young: al.filter(c => c.size < 1).length, births: this.iv.births, deaths: this.iv.deaths, utt: this.iv.utt, digs: this.iv.digs,
+      food: Math.round(this.plants.reduce((a, p) => a + p.b, 0)), plants: this.plants.length, water: this.surfWater ?? this.wlist.length, temp: Math.round(this.temp * 10) / 10,
+      brain: al.length ? Math.round(avg(c => c.br.H) * 10) / 10 : null, body: al.length ? Math.round(avg(c => c.g.segL * c.g.seg) * 10) / 10 : null,
+      legs: al.length ? Math.round(avg(c => c.g.legs) * 100) / 100 : null, tol: al.length ? Math.round(avg(c => c.g.tol || 0) * 100) / 100 : null,
+      tox: Math.round(this.plants.reduce((a, p) => a + (p.tox || 0), 0) / pl * 100) / 100, gen: this.maxGen
+    });
+    this.iv = { births: 0, deaths: {}, utt: 0, digs: 0 };
+    if (this.hist.length > 1600) this.hist = this.hist.filter((h, i) => i % 2 === 0 || i > this.hist.length - 200);
+  }
   // ---------- liv och död ----------
-  die(c, how) {
-    c.alive = false; c.diedAt = this.time; c.flesh = 25 * c.size;
+  die(c, how, cause = 'other') {
+    c.alive = false; c.diedAt = this.time; c.flesh = 25 * c.size; c.cause = cause;
+    this.causes[cause] = (this.causes[cause] || 0) + 1; this.iv.deaths[cause] = (this.iv.deaths[cause] || 0) + 1;
+    const sk = cause + '|' + this.season(); this.causes[sk] = (this.causes[sk] || 0) + 1;
     if (c.gen === 1 || c.kids > 0 || this.aliveCount < 12) this.chron(`${c.name} ${how}${c.kids ? `, och lämnar ${c.kids} barn efter sig` : ''}.`, c);
     let alive = 0; for (const o of this.creatures) if (o.alive) alive++;
     if (!alive) this.chron('Det finns inget liv kvar i dalen. Bara växterna och jorden minns.');
@@ -636,7 +657,7 @@ class World {
     for (const c of this.creatures) {
       if (c.alive || (c.flesh > 0.2 && this.time - c.diedAt < 1.5 * DAY)) { keep.push(c); continue; }
       this.fertilize(c.x, Math.max(0, c.flesh) * 0.06);
-      this.dead.push({ id: c.id, name: c.name, gen: c.gen, parents: c.parents, pnames: c.pnames, kids: c.kids, born: c.born, died: c.diedAt, hue: c.g.hue });
+      this.dead.push({ id: c.id, name: c.name, gen: c.gen, parents: c.parents, pnames: c.pnames, kids: c.kids, born: c.born, died: c.diedAt, hue: c.g.hue, cause: c.cause, said: c.say ? c.say.txt : null, spoke: c.spoke, meals: c.meals, builds: c.builds });
       if (this.dead.length > 3000) this.dead.shift();
     }
     this.creatures = keep;
@@ -655,7 +676,7 @@ class World {
       if (keys.length >= 300) { let lo = keys[0]; for (const k of keys) if (this.lex[k].n < this.lex[lo].n) lo = k; delete this.lex[lo]; }
       e = this.lex[w] = { n: 0, sp: [], ctx: {}, first: this.time, by: c.name, logged: 0 };
     }
-    e.n++; this.uttTot++; e.last = this.time;
+    e.n++; this.uttTot++; this.iv.utt++; e.last = this.time;
     if (!e.sp.includes(c.id)) { e.sp.push(c.id); if (e.sp.length > 40) e.sp.shift(); }
     for (const [k] of CTX) if (ctx[k]) { e.ctx[k] = (e.ctx[k] || 0) + 1; this.ctxTot[k] = (this.ctxTot[k] || 0) + 1; }
     if (e.n >= 10 && e.sp.length >= 3 && !(e.logged & 1)) { e.logged |= 1; this.chron(`Ordet "${w}" används nu av ${e.sp.length} olika varelser.`); }
@@ -732,7 +753,7 @@ class World {
     const gen = Math.max(a.gen, b.gen) + 1, x = wrapX(a.x + wrapD(b.x - a.x) / 2);
     const ch = this.makeCreature(this.childName(a, b), x, g, br, gen, [a.id, b.id], { size: 0.5, energy: 50, pnames: [a.name, b.name] });
     ch.y = Math.min(a.y, b.y); ch.face = a.face;
-    this.births++; this.aliveCount++;
+    this.births++; this.aliveCount++; this.iv.births++;
     if (this.births === 1) this.chron(`Det första barnet i dalens historia är fött: ${ch.name}, barn till ${a.name} och ${b.name}.`, ch);
     else if (gen > this.maxGen) this.chron(`Generation ${gen} är född: ${ch.name}, barn till ${a.name} och ${b.name}.`, ch);
     else if (this.aliveCount <= 12) this.chron(`${ch.name} föds, barn till ${a.name} och ${b.name}.`, ch);
@@ -747,11 +768,11 @@ class World {
     const arr = a => Array.from(a, v => Math.round(v * 1e4) / 1e4);
     return {
       v: 2, seed: this.seed, rng: this.rng.s, time: this.time, nextId: this.nextId, firsts: this.firsts, log: this.log, lastDay: this.lastDay, lake: this.lake,
-      fert: arr(this.fert), dead: this.dead, maxGen: this.maxGen, births: this.births, popHist: this.popHist, lex: this.lex, ctxTot: this.ctxTot, uttTot: this.uttTot, stats: this.stats, moist: arr(this.moist), weather: this.weather, snow: this.snow, water0: this.water0,
+      fert: arr(this.fert), dead: this.dead, maxGen: this.maxGen, births: this.births, popHist: this.popHist, lex: this.lex, ctxTot: this.ctxTot, uttTot: this.uttTot, stats: this.stats, moist: arr(this.moist), weather: this.weather, snow: this.snow, water0: this.water0, hist: this.hist, causes: this.causes, founders: this.founders, histAcc: this.histAcc, iv: this.iv,
       tiles: b64(this.tiles), surface: Array.from(this.surface), plants: this.plants,
       creatures: this.creatures.map(c => ({
         id: c.id, name: c.name, gen: c.gen, parents: c.parents, g: c.g, x: c.x, y: c.y, vx: c.vx, vy: c.vy, face: c.face, energy: c.energy, age: c.age, alive: c.alive,
-        meals: c.meals, rbar: c.rbar, hs: arr(c.hs), size: c.size, born: c.born, kids: c.kids, mateCd: c.mateCd, flesh: c.flesh, diedAt: c.diedAt, pnames: c.pnames, carry: c.carry, builds: c.builds, spoke: c.spoke, hyd: c.hyd,
+        meals: c.meals, rbar: c.rbar, hs: arr(c.hs), size: c.size, born: c.born, kids: c.kids, mateCd: c.mateCd, flesh: c.flesh, diedAt: c.diedAt, pnames: c.pnames, carry: c.carry, builds: c.builds, spoke: c.spoke, hyd: c.hyd, cause: c.cause, say: c.say,
         br: { H: c.br.H, wih: arr(c.br.wih), whh: arr(c.br.whh), bh: arr(c.br.bh), who: arr(c.br.who), bo: arr(c.br.bo) },
         br0: { H: c.br0.H, wih: arr(c.br0.wih), whh: arr(c.br0.whh), bh: arr(c.br0.bh), who: arr(c.br0.who), bo: arr(c.br0.bo) }
       }))
@@ -763,6 +784,7 @@ class World {
     if (d.fert) w.fert = Float32Array.from(d.fert); w.dead = d.dead || []; w.maxGen = d.maxGen || 1; w.births = d.births || 0; w.popHist = d.popHist || [];
     w.lex = d.lex || {}; w.ctxTot = d.ctxTot || {}; w.uttTot = d.uttTot || 0; w.stats = d.stats || { digs: 0, builds: 0, gifts: 0 };
     if (d.moist) w.moist = Float32Array.from(d.moist); if (d.weather) w.weather = d.weather; w.snow = d.snow || 0;
+    w.hist = d.hist || []; w.causes = d.causes || {}; w.founders = d.founders || null; w.histAcc = d.histAcc || 0; if (d.iv) w.iv = d.iv;
     const bin = atob(d.tiles); for (let i = 0; i < bin.length; i++) w.tiles[i] = bin.charCodeAt(i);
     w.surface = Int16Array.from(d.surface);
     w.plants = d.plants; w.plantAt = new Array(WW).fill(null); for (const p of w.plants) w.plantAt[p.x] = p;
@@ -781,7 +803,7 @@ class World {
       const c = w.makeCreature(s.name, s.x, s.g, br, s.gen, s.parents, { size: s.size || 1, br0, pnames: s.pnames });
       w.nextId = nid;
       Object.assign(c, { id: s.id, y: s.y, vx: s.vx, vy: s.vy, face: s.face, energy: s.energy, age: s.age, alive: s.alive, meals: s.meals, rbar: s.rbar, hs: F(s.hs),
-        born: s.born || 0, kids: s.kids || 0, mateCd: s.mateCd || 0, flesh: s.flesh || 0, diedAt: s.diedAt || 0, carry: s.carry || 0, builds: s.builds || 0, spoke: s.spoke || 0, hyd: s.hyd === undefined ? 90 : s.hyd });
+        born: s.born || 0, kids: s.kids || 0, mateCd: s.mateCd || 0, flesh: s.flesh || 0, diedAt: s.diedAt || 0, carry: s.carry || 0, builds: s.builds || 0, spoke: s.spoke || 0, hyd: s.hyd === undefined ? 90 : s.hyd, cause: s.cause, say: s.say || null });
     }
     w.initWater(); if (d.water0) w.water0 = d.water0; w.temp = w.calcTemp(); w.rebuildBins(); w.terrainVersion++;
     return w;

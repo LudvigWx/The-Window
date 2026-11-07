@@ -83,9 +83,13 @@ function catchUp(sec) {
     if (done < steps && performance.now() - tStart > budget) cut = true; // telefonen hinner inte allt – resten av tiden sov dalen
     if (done < steps && !cut) { setTimeout(tick, 0); return; }
     world.onLog = saveLog;
-    const ev = world.log.slice(logStart);
+    const ev = world.log.slice(logStart), hs = world.hist.filter(h => h.t > world.time - done * DT);
+    let born = 0, died = {}, peak = 0; for (const h of hs) { born += h.births; peak = Math.max(peak, h.pop); for (const k in h.deaths) died[k] = (died[k] || 0) + h.deaths[k]; }
+    const dsum = Object.values(died).reduce((a, b) => a + b, 0);
+    const story = hs.length ? [`${born} föddes och ${dsum} dog${dsum ? ` (${Object.entries(died).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v} av ${CAUSE_SV[k] || k}`).join(', ')})` : ''}.`, `Som flest levde ${peak} samtidigt. Nu lever ${world.creatures.filter(c => c.alive).length}.`] : [];
+    if (hs.length > 2) { $('#catchSpark').classList.remove('hidden'); spark($('#catchSpark'), hs.map(h => h.pop)); } else $('#catchSpark').classList.add('hidden');
     $('#catchTxt').textContent = cut ? `Du var borta i ${fmtDur(sec)}. Telefonen hann räkna ${fmtDur(done * DT)} av det – resten av tiden vilade dalen.` : `Det har gått ${fmtDur(sec)} i dalen. Nu är det ${fmtT(world.time).toLowerCase()}.`;
-    $('#catchSum').innerHTML = ev.length ? ev.slice(-12).map(l => `<div>${esc(l.msg)}</div>`).join('') : '<div>Inget särskilt hände. De har levt sina liv.</div>';
+    $('#catchSum').innerHTML = story.map(s => `<div><b>${esc(s)}</b></div>`).join('') + (ev.length ? ev.slice(-12).map(l => `<div>${esc(l.msg)}</div>`).join('') : '<div>Inget särskilt hände. De har levt sina liv.</div>');
     $('#catchOk').classList.remove('hidden');
   };
   setTimeout(tick, 30);
@@ -140,6 +144,7 @@ setInterval(() => {
   updCard(); renderFeed();
   if (!$('#chron').classList.contains('hidden')) renderChron();
   if (!$('#lex').classList.contains('hidden') && chipTick % 8 === 0) renderLex();
+  if (!$('#histP').classList.contains('hidden') && chipTick % 20 === 0) renderHist();
   $('#menuStats').textContent = `Dalen har funnits i ${world.fmtAge(world.time)}. ${world.plants.length} växter.`;
 }, 250);
 function phase() { const s = world.sunHeight(); return s < -0.2 ? 0 : s < 0.2 ? (world.dayFrac() < 0.5 ? 1 : 3) : 2; }
@@ -188,12 +193,15 @@ function buildChips() {
   all2.onclick = () => { const was = $('#people').classList.contains('hidden'); closePanels(); $('#people').classList.toggle('hidden', !was); if (was) renderPeople(); };
   box.appendChild(all2);
   for (const c of world.creatures.filter(c => c.gen === 1)) { const b = document.createElement('button'); b.className = 'chip glass'; b.dataset.id = c.id; b.innerHTML = `<span class="dot" style="background:hsl(${c.g.hue},55%,55%)"></span>${esc(c.name)}${c.alive ? '' : ' †'}`; b.onclick = () => select(c); box.appendChild(b); }
+  const hb = document.createElement('button'); hb.className = 'chip glass'; hb.textContent = '📈 Historia';
+  hb.onclick = () => { const was = $('#histP').classList.contains('hidden'); closePanels(); $('#histP').classList.toggle('hidden', !was); if (was) renderHist(); };
+  box.appendChild(hb);
   const all = document.createElement('button'); all.className = 'chip glass'; all.textContent = '🌄 Översikt';
   all.onclick = () => { follow = null; sel = null; $('#card').classList.add('hidden'); ren.cam.zoom = ren.minZoom(); refreshChips(); };
   box.appendChild(all); refreshChips();
 }
 function refreshChipLabels(alive) { const b = $('#peopleChip'); if (b) b.textContent = `👪 Alla (${alive})`; }
-function closePanels() { ['#chron', '#menu', '#people', '#lex'].forEach(s => $(s).classList.add('hidden')); }
+function closePanels() { ['#chron', '#menu', '#people', '#lex', '#histP'].forEach(s => $(s).classList.add('hidden')); }
 function renderPeople() {
   const al = world.creatures.filter(c => c.alive).sort((a, b) => b.gen - a.gen || a.age - b.age);
   $('#peopleTitle').textContent = `Alla som lever (${al.length}) · generation ${world.maxGen}`;
@@ -206,6 +214,8 @@ function refreshChips() { document.querySelectorAll('#chips .chip').forEach(b =>
 
 // ---------- kortet om en varelse ----------
 $('#cClose').onclick = () => { $('#card').classList.add('hidden'); sel = null; follow = null; refreshChips(); };
+let showKin = false;
+$('#kinBtn').onclick = () => { showKin = !showKin; $('#kin').classList.toggle('hidden', !showKin); updCard(); };
 $('#brainBtn').onclick = () => { showBrain = !showBrain; $('#brainCv').classList.toggle('hidden', !showBrain); $('#brainBtn').textContent = showBrain ? '🧠 Dölj hjärnan' : '🧠 Visa hjärnan'; updCard(); };
 function doing(c) { if (!c.alive) return 'Lever inte längre'; if (c.eating > 0.5) return 'Äter'; if (c.digP > 0) return 'Gräver'; if (c.touchW && c.out[2] > 0 && c.hyd < 99) return 'Dricker'; if (c.say && world.time - c.say.t < 0.6) return 'Låter: "' + c.say.txt + '"'; if (c.size < 1 && c.age < 0.05 * DAY) return 'Har precis fötts'; if (world.waterAt(c.x, c.y - c.h * 0.5)) return 'Simmar'; if (!c.grounded) return 'Hoppar'; if (Math.abs(c.vx) > 4) return 'Går'; return 'Står still'; }
 function seeing(c) {
@@ -224,6 +234,7 @@ function updCard() {
     [c.say ? `Senast sa: <b>"${esc(c.say.txt)}"</b>` : 'Har aldrig låtit', c.carry ? `Bär: <b>${MAT[c.carry]}</b>` : '', c.builds ? `Har byggt ${c.builds} gånger` : ''].filter(Boolean).join(' · ') + '<br>' +
     `Kropp: ${G.seg} segment, ${G.legs} benpar${G.tail ? ', svans' : ''}${G.ant ? ', antenner' : ''}<br>Hjärna: ${c.br.H} neuroner, lär sig av belöning och smärta`;
   if (showBrain) drawBrain(c);
+  if (showKin && kinTick++ % 8 === 0) renderKin(c);
 }
 function drawBrain(c) {
   const cv = $('#brainCv'), w = cv.clientWidth || 320, h = cv.clientHeight || 230, d = window.devicePixelRatio || 1;
@@ -299,6 +310,112 @@ function playVoices() {
   lastSoundT = world.time;
 }
 try { if (localStorage.getItem('thewindow-sound') === '1') setSound(true); } catch (e) { }
+
+// ---------- historia: grafer ----------
+const CAUSE_SV = { hunger: 'hunger', thirst: 'törst', cold: 'kyla', age: 'ålder', poison: 'gift', other: 'okänt' };
+let histTab = 'pop', kinTick = 0;
+document.querySelectorAll('#histTabs button').forEach(b => b.onclick = () => { histTab = b.dataset.t; document.querySelectorAll('#histTabs button').forEach(x => x.classList.toggle('on', x === b)); renderHist(); });
+$('#histClose').onclick = () => $('#histP').classList.add('hidden');
+function spark(cv, vals) {
+  const w = cv.clientWidth || 300, h = cv.clientHeight || 60, d = window.devicePixelRatio || 1; cv.width = w * d; cv.height = h * d;
+  const g = cv.getContext('2d'); g.setTransform(d, 0, 0, d, 0, 0); g.clearRect(0, 0, w, h);
+  const mx = Math.max(1, ...vals); g.strokeStyle = '#f2b76b'; g.lineWidth = 2; g.beginPath();
+  vals.forEach((v, i) => { const x = i / Math.max(1, vals.length - 1) * w, y = h - 4 - v / mx * (h - 10); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke();
+}
+// en linjegraf: flera serier på samma skala, tid i dygn längs x
+function lineChart(id, series, opt = {}) {
+  const cv = document.getElementById(id); if (!cv) return;
+  const w = cv.clientWidth || 320, h = cv.clientHeight || 150, d = window.devicePixelRatio || 1; cv.width = w * d; cv.height = h * d;
+  const g = cv.getContext('2d'); g.setTransform(d, 0, 0, d, 0, 0); g.clearRect(0, 0, w, h);
+  const H = world.hist; if (H.length < 2) { g.fillStyle = '#a9a5c2'; g.font = '12px system-ui'; g.fillText('Samlar data… (en mätpunkt var sjätte timme i dalen)', 4, h / 2); return; }
+  const t0 = H[0].t, t1 = H[H.length - 1].t, L = 30, R = 8, T = 8, B = 18, pw = w - L - R, ph = h - T - B;
+  let lo = opt.min ?? Infinity, hi = -Infinity;
+  for (const s of series) for (const p of H) { const v = s.f(p); if (v == null) continue; if (opt.min == null) lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  if (!isFinite(hi)) return; if (hi === lo) hi = lo + 1; if (opt.min == null && lo > 0) lo = 0;
+  const X = t => L + (t - t0) / Math.max(1, t1 - t0) * pw, Y = v => T + ph - (v - lo) / (hi - lo) * ph;
+  g.strokeStyle = 'rgba(255,255,255,0.08)'; g.lineWidth = 1; g.font = '10px system-ui'; g.fillStyle = '#8f8aa9'; g.textAlign = 'right';
+  for (let k = 0; k <= 3; k++) { const v = lo + (hi - lo) * k / 3, y = Y(v); g.beginPath(); g.moveTo(L, y); g.lineTo(w - R, y); g.stroke(); g.fillText(Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10, L - 4, y + 3); }
+  if (lo < 0 && hi > 0) { g.strokeStyle = 'rgba(255,255,255,0.25)'; g.beginPath(); g.moveTo(L, Y(0)); g.lineTo(w - R, Y(0)); g.stroke(); }
+  g.textAlign = 'center'; const days = (t1 - t0) / DAY, step = Math.max(1, Math.ceil(days / 5));
+  for (let dd = Math.ceil(t0 / DAY); dd <= t1 / DAY; dd += step) g.fillText('dag ' + (dd + 1), X(dd * DAY), h - 4);
+  // årstider som svaga band i bakgrunden
+  for (let y0 = Math.floor(t0 / YEAR) * YEAR; y0 < t1; y0 += YEAR) { const a = Math.max(t0, y0 + YEAR * 0.625), b = Math.min(t1, y0 + YEAR * 0.875); if (b > a) { g.fillStyle = 'rgba(160,190,255,0.07)'; g.fillRect(X(a), T, X(b) - X(a), ph); } }
+  for (const s of series) {
+    g.strokeStyle = s.c; g.lineWidth = s.w || 1.8; g.beginPath(); let on = false;
+    for (const p of H) { const v = s.f(p); if (v == null) { on = false; continue; } const x = X(p.t), y = Y(v); on ? g.lineTo(x, y) : g.moveTo(x, y); on = true; }
+    g.stroke();
+  }
+}
+function legend(series) { return `<div class="legend">${series.map(s => `<span><i style="background:${s.c}"></i>${s.n}</span>`).join('')}</div>`; }
+const sumD = p => Object.values(p.deaths || {}).reduce((a, b) => a + b, 0);
+function renderHist() {
+  if (!world) return;
+  const B = $('#histBody'), H = world.hist;
+  let html = '', charts = [];
+  const add = (title, id, series, opt, note) => { html += `<div class="ctitle">${title}</div><canvas class="chart" id="${id}"></canvas>${legend(series)}${note ? `<p style="color:var(--dim);font-size:12px;margin-top:-6px">${note}</p>` : ''}`; charts.push([id, series, opt]); };
+  if (histTab === 'pop') {
+    const peak = H.reduce((a, h) => Math.max(a, h.pop), 0);
+    html += `<p>${world.births} har fötts och ${world.dead.length + world.creatures.filter(c => !c.alive).length} har dött sedan stamföräldrarna. Som flest har ${peak} levt samtidigt. Generation ${world.maxGen} är den senaste.</p>`;
+    add('Hur många som lever', 'c1', [{ n: 'lever', c: '#f2b76b', f: p => p.pop, w: 2.2 }, { n: 'varav unga', c: '#7fd1c9', f: p => p.young }], {}, 'Blå band = vinter.');
+    add('Födslar och dödsfall (per 6 timmar)', 'c2', [{ n: 'födda', c: '#7fd1a0', f: p => p.births }, { n: 'döda', c: '#f2788c', f: sumD }]);
+  } else if (histTab === 'env') {
+    add('Mat i dalen (växternas samlade massa)', 'c1', [{ n: 'mat', c: '#7fd1a0', f: p => p.food, w: 2.2 }], {}, 'Om maten rasar när befolkningen växer har de ätit ur dalen.');
+    add('Vatten ovan jord (rutor)', 'c2', [{ n: 'vatten', c: '#6fa8ff', f: p => p.water }]);
+    add('Temperatur', 'c3', [{ n: '°C', c: '#f2b76b', f: p => p.temp }], { min: Math.min(-5, ...H.map(h => h.temp)) });
+  } else if (histTab === 'evo') {
+    html += `<p>Genomsnitt för alla som lever. Om kurvorna rör sig är det evolution: de som klarade sig bäst har fått fler barn.</p>`;
+    add('Hjärnans storlek (neuroner)', 'c1', [{ n: 'neuroner', c: '#c9a0ff', f: p => p.brain }]);
+    add('Kroppens längd och antal benpar', 'c2', [{ n: 'kroppslängd', c: '#f2b76b', f: p => p.body }, { n: 'benpar × 10', c: '#7fd1c9', f: p => p.legs == null ? null : p.legs * 10 }]);
+    add('Gift i växterna och tålighet hos varelserna', 'c3', [{ n: 'växternas gift', c: '#b07cff', f: p => p.tox }, { n: 'varelsernas tålighet', c: '#7fd1a0', f: p => p.tol }], { min: 0 });
+    add('Hur mycket de pratar och gräver (per 6 timmar)', 'c4', [{ n: 'yttranden / 10', c: '#f2d36b', f: p => p.utt / 10 }, { n: 'grävda rutor', c: '#c98b5b', f: p => p.digs }]);
+  } else if (histTab === 'death') {
+    const tot = Object.entries(world.causes).filter(([k]) => !k.includes('|'));
+    const sum = tot.reduce((a, [, v]) => a + v, 0) || 1;
+    html += `<p>${sum === 1 && !tot.length ? 'Ingen har dött än.' : `Så här har de ${sum} döda dött:`}</p><div class="bars">` + tot.sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div><span>${CAUSE_SV[k] || k}</span><b style="width:${Math.max(4, v / sum * 60)}%"></b><em>${v} (${Math.round(v / sum * 100)} %)</em></div>`).join('') + '</div>';
+    const seasons = ['Vår', 'Sommar', 'Höst', 'Vinter'], causes = tot.map(([k]) => k);
+    if (causes.length) html += `<div class="ctitle" style="margin-top:14px">Per årstid</div><table class="cmp"><tr><th></th>${seasons.map(s => `<th>${s}</th>`).join('')}</tr>` + causes.map(k => `<tr><td>${CAUSE_SV[k] || k}</td>${seasons.map(s => `<td>${world.causes[k + '|' + s] || 0}</td>`).join('')}</tr>`).join('') + '</table>';
+    add('Dödsfall per 6 timmar, efter orsak', 'c1', ['hunger', 'thirst', 'cold', 'age', 'poison'].map((k, i) => ({ n: CAUSE_SV[k], c: ['#f2b76b', '#6fa8ff', '#a8d8ff', '#9a96b0', '#b07cff'][i], f: p => (p.deaths || {})[k] || 0 })));
+  } else if (histTab === 'then') {
+    const F = world.founders, al = world.creatures.filter(c => c.alive);
+    if (!F) html += '<p>Stamföräldrarnas gener sparades inte i den här dalen (den startades i en äldre version). Starta en ny värld för att kunna jämföra.</p>';
+    else if (!al.length) html += '<p>Ingen lever just nu att jämföra med.</p>';
+    else {
+      const rows = [['Kroppssegment', g => g.seg], ['Segmentlängd', g => g.segL], ['Benpar', g => g.legs], ['Benlängd', g => g.legL], ['Ögonstorlek', g => g.eye], ['Svans (andel med)', g => g.tail > 0 ? 1 : 0, true], ['Antenner (andel med)', g => g.ant > 0 ? 1 : 0, true], ['Neuroner i hjärnan', (g, c) => c ? c.br.H : g.hid], ['Tålighet mot gift', g => g.tol || 0], ['Nyfikenhet (brus)', g => g.explore], ['Inlärningstakt × 1000', g => g.lr * 1000], ['Livslängd (dygn)', g => g.maxAge / DAY]];
+      const fmt = (v, pct) => pct ? Math.round(v * 100) + ' %' : (Math.abs(v) >= 10 ? Math.round(v) : Math.round(v * 100) / 100);
+      html += `<p>Stamföräldrarna ${F.map(f => esc(f.name)).join(' och ')} jämfört med genomsnittet av de ${al.length} som lever nu (generation ${world.maxGen}).</p><table class="cmp"><tr><th></th><th>Då</th><th>Nu</th></tr>` +
+        rows.map(([n, f, pct]) => { const then = F.reduce((a, x) => a + f(x.g, null), 0) / F.length, now = al.reduce((a, c) => a + f(c.g, c), 0) / al.length; const ch = then ? (now - then) / Math.abs(then) : now; const mark = Math.abs(ch) > 0.15 ? (ch > 0 ? ' ▲' : ' ▼') : ''; return `<tr><td>${n}</td><td>${fmt(then, pct)}</td><td>${fmt(now, pct)}${mark}</td></tr>`; }).join('') + '</table><p style="color:var(--dim);font-size:12px">▲▼ = förändrats mer än 15 %.</p>';
+    }
+  }
+  const st = B.scrollTop; B.innerHTML = html; B.scrollTop = st;
+  requestAnimationFrame(() => charts.forEach(([id, s, o]) => lineChart(id, s, o)));
+}
+// ---------- släkt ----------
+function rec(id) { return world.creatures.find(c => c.id === id) || world.dead.find(d => d.id === id); }
+function nameLink(r) { if (!r) return '<span style="color:var(--dim)">okänd</span>'; const alive = r.alive; return alive ? `<a href="#" data-sel="${r.id}">${esc(r.name)}</a>` : `${esc(r.name)} †`; }
+function renderKin(c) {
+  const lines = [];
+  // anor uppåt, generation för generation
+  let gen = [c], depth = 0; const labels = ['Föräldrar', 'Mor- och farföräldrar', 'Gammelföräldrar'];
+  while (depth < 6) {
+    const up = []; for (const x of gen) if (x && x.parents) for (const pid of x.parents) up.push(rec(pid) || { name: '?', id: pid });
+    if (!up.length) break;
+    // samma förfader kan dyka upp flera gånger när släktingar fått barn med varandra
+    const cnt = new Map(); for (const r of up) cnt.set(r.id, (cnt.get(r.id) || 0) + 1);
+    const uniq = [...new Map(up.map(r => [r.id, r])).values()];
+    lines.push(`<b>${labels[depth] || `${depth + 1} generationer upp`}:</b> ${uniq.slice(0, 8).map(r => nameLink(r) + (cnt.get(r.id) > 1 ? ` ×${cnt.get(r.id)}` : '')).join(', ')}${uniq.length > 8 ? ` och ${uniq.length - 8} till` : ''}`);
+    gen = uniq; depth++;
+  }
+  if (!c.parents) lines.push('<b>Stamförälder</b> – kommer från urtiden.');
+  const kids = world.creatures.filter(o => o.parents && o.parents.includes(c.id)).concat(world.dead.filter(o => o.parents && o.parents.includes(c.id)));
+  lines.push(`<b>Barn (${kids.length}):</b> ${kids.length ? kids.slice(0, 12).map(nameLink).join(', ') + (kids.length > 12 ? ` och ${kids.length - 12} till` : '') : 'inga än'}`);
+  // levande ättlingar
+  const kidsOf = new Map(); for (const o of world.creatures.concat(world.dead)) if (o.parents) for (const pid of o.parents) { if (!kidsOf.has(pid)) kidsOf.set(pid, []); kidsOf.get(pid).push(o); }
+  const seen = new Set([c.id]), q = [c.id]; let desc = 0;
+  while (q.length) { for (const o of kidsOf.get(q.pop()) || []) if (!seen.has(o.id)) { seen.add(o.id); q.push(o.id); if (o.alive) desc++; } }
+  lines.push(`<b>Levande ättlingar:</b> ${desc}`);
+  $('#kin').innerHTML = lines.map(l => `<div>${l}</div>`).join('');
+  document.querySelectorAll('#kin a[data-sel]').forEach(a => a.onclick = e => { e.preventDefault(); const o = world.creatures.find(z => z.id === +a.dataset.sel); if (o) select(o); });
+}
 
 boot();
 requestAnimationFrame(frame);
