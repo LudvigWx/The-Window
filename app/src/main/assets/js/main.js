@@ -71,7 +71,7 @@ function catchUp(sec) {
   sec = Math.min(sec, MAX_CATCHUP);
   if (!world || sec < 20) return;
   busy = true;
-  const steps = Math.floor(sec / DT), logStart = world.log.length; let done = 0;
+  const steps = Math.floor(sec / DT), logStart = world.log.length, budget = 45000, tStart = performance.now(); let done = 0, cut = false;
   $('#overlay').classList.remove('hidden'); ['#ovIntro', '#ovPre'].forEach(s => $(s).classList.add('hidden')); $('#ovCatch').classList.remove('hidden');
   $('#catchOk').classList.add('hidden'); $('#catchSum').innerHTML = '';
   $('#catchTxt').textContent = `Det har gått ${fmtDur(sec)} i dalen. Räknar ikapp…`;
@@ -80,10 +80,11 @@ function catchUp(sec) {
     const t0 = performance.now();
     while (done < steps && performance.now() - t0 < 40) { world.step(); done++; }
     $('#catchBar').style.width = (done / steps * 100) + '%';
-    if (done < steps) { setTimeout(tick, 0); return; }
+    if (done < steps && performance.now() - tStart > budget) cut = true; // telefonen hinner inte allt – resten av tiden sov dalen
+    if (done < steps && !cut) { setTimeout(tick, 0); return; }
     world.onLog = saveLog;
     const ev = world.log.slice(logStart);
-    $('#catchTxt').textContent = `Det har gått ${fmtDur(sec)} i dalen. Nu är det ${fmtT(world.time).toLowerCase()}.`;
+    $('#catchTxt').textContent = cut ? `Du var borta i ${fmtDur(sec)}. Telefonen hann räkna ${fmtDur(done * DT)} av det – resten av tiden vilade dalen.` : `Det har gått ${fmtDur(sec)} i dalen. Nu är det ${fmtT(world.time).toLowerCase()}.`;
     $('#catchSum').innerHTML = ev.length ? ev.slice(-12).map(l => `<div>${esc(l.msg)}</div>`).join('') : '<div>Inget särskilt hände. De har levt sina liv.</div>';
     $('#catchOk').classList.remove('hidden');
   };
@@ -126,7 +127,10 @@ function camera(rdt) {
 }
 setInterval(() => {
   if (!world) return;
-  $('#clock').innerHTML = `${fmtT(world.time)}<small>${['Natt', 'Gryning', 'Dag', 'Skymning'][phase()]} · ${world.creatures.filter(c => c.alive).length} lever</small>`;
+  const alive = world.creatures.filter(c => c.alive).length;
+  $('#clock').innerHTML = `${fmtT(world.time)}<small>${['Natt', 'Gryning', 'Dag', 'Skymning'][phase()]} · ${alive} lever · gen ${world.maxGen}</small>`;
+  if (++chipTick % 8 === 0) refreshChipLabels(alive);
+  if (!$('#people').classList.contains('hidden') && chipTick % 4 === 0) renderPeople();
   const rs = effWin.reduce((a, b) => a + b[0], 0), ss = effWin.reduce((a, b) => a + b[1], 0), eff = rs ? ss / rs : 0;
   const f = x => x < 10 ? x.toFixed(1) + '×' : Math.round(x) + '×';
   $('#spdV').textContent = paused ? 'Pausad' : (eff < speed * 0.8 && speed > 2 ? `${f(eff)} (max)` : f(speed));
@@ -170,33 +174,48 @@ function handleTap(x, y) {
   for (const c of world.creatures) { const [ix, iy] = ren.ipos(c), [sx, sy] = ren.toScreen(ix, iy - c.h / 2); const d = Math.hypot(sx - x, sy - y); if (d < bd) { bd = d; best = c; } }
   if (best) select(best); else { sel = null; follow = null; $('#card').classList.add('hidden'); refreshChips(); }
 }
-function select(c) { sel = follow = c; if (ren.cam.zoom < 2) ren.cam.zoom = Math.min(4, ren.H / 230); $('#card').classList.remove('hidden'); $('#chron').classList.add('hidden'); $('#menu').classList.add('hidden'); refreshChips(); updCard(); }
+function select(c) { sel = follow = c; if (ren.cam.zoom < 2) ren.cam.zoom = Math.min(4, ren.H / 230); $('#card').classList.remove('hidden'); closePanels(); refreshChips(); updCard(); }
 
 // ---------- knappar längst ner ----------
+let chipTick = 0;
 function buildChips() {
   const box = $('#chips'); box.innerHTML = '';
-  for (const c of world.creatures) { const b = document.createElement('button'); b.className = 'chip glass'; b.dataset.id = c.id; b.innerHTML = `<span class="dot" style="background:hsl(${c.g.hue},55%,55%)"></span>${esc(c.name)}`; b.onclick = () => select(c); box.appendChild(b); }
+  const all2 = document.createElement('button'); all2.className = 'chip glass'; all2.id = 'peopleChip'; all2.textContent = '👪 Alla';
+  all2.onclick = () => { const was = $('#people').classList.contains('hidden'); closePanels(); $('#people').classList.toggle('hidden', !was); if (was) renderPeople(); };
+  box.appendChild(all2);
+  for (const c of world.creatures.filter(c => c.gen === 1)) { const b = document.createElement('button'); b.className = 'chip glass'; b.dataset.id = c.id; b.innerHTML = `<span class="dot" style="background:hsl(${c.g.hue},55%,55%)"></span>${esc(c.name)}${c.alive ? '' : ' †'}`; b.onclick = () => select(c); box.appendChild(b); }
   const all = document.createElement('button'); all.className = 'chip glass'; all.textContent = '🌄 Översikt';
   all.onclick = () => { follow = null; sel = null; $('#card').classList.add('hidden'); ren.cam.zoom = ren.minZoom(); refreshChips(); };
   box.appendChild(all); refreshChips();
 }
+function refreshChipLabels(alive) { const b = $('#peopleChip'); if (b) b.textContent = `👪 Alla (${alive})`; }
+function closePanels() { ['#chron', '#menu', '#people'].forEach(s => $(s).classList.add('hidden')); }
+function renderPeople() {
+  const al = world.creatures.filter(c => c.alive).sort((a, b) => b.gen - a.gen || a.age - b.age);
+  $('#peopleTitle').textContent = `Alla som lever (${al.length})`;
+  $('#peopleList').innerHTML = al.map(c => `<div class="prow" data-id="${c.id}"><span class="dot" style="background:hsl(${c.g.hue},55%,55%)"></span><div><b>${esc(c.name)}</b>${c.size < 1 ? ' · ung' : ''}<div class="meta">Generation ${c.gen} · ${world.fmtAge(c.age)} · ${c.kids} barn${c.pnames ? ' · barn till ' + esc(c.pnames.join(' och ')) : ''}</div></div></div>`).join('') +
+    `<p class="meta" style="color:var(--dim);font-size:12px;margin-top:12px">${world.births} har fötts i dalen. ${world.dead.length + world.creatures.filter(c => !c.alive).length} har dött.</p>`;
+  document.querySelectorAll('#peopleList .prow').forEach(r => r.onclick = () => { const c = world.creatures.find(z => z.id === +r.dataset.id); if (c) { closePanels(); select(c); } });
+}
+$('#peopleClose').onclick = () => $('#people').classList.add('hidden');
 function refreshChips() { document.querySelectorAll('#chips .chip').forEach(b => b.classList.toggle('on', !!follow && +b.dataset.id === follow.id)); }
 
 // ---------- kortet om en varelse ----------
 $('#cClose').onclick = () => { $('#card').classList.add('hidden'); sel = null; follow = null; refreshChips(); };
 $('#brainBtn').onclick = () => { showBrain = !showBrain; $('#brainCv').classList.toggle('hidden', !showBrain); $('#brainBtn').textContent = showBrain ? '🧠 Dölj hjärnan' : '🧠 Visa hjärnan'; updCard(); };
-function doing(c) { if (!c.alive) return 'Lever inte längre'; if (c.eating > 0.5) return 'Äter'; if (world.waterAt(c.x, c.y - c.h * 0.5)) return 'Simmar'; if (!c.grounded) return 'Hoppar'; if (Math.abs(c.vx) > 4) return 'Går'; return 'Står still'; }
+function doing(c) { if (!c.alive) return 'Lever inte längre'; if (c.eating > 0.5) return 'Äter'; if (c.size < 1 && c.age < 0.05 * DAY) return 'Har precis fötts'; if (world.waterAt(c.x, c.y - c.h * 0.5)) return 'Simmar'; if (!c.grounded) return 'Hoppar'; if (Math.abs(c.vx) > 4) return 'Går'; return 'Står still'; }
 function seeing(c) {
   if (!c.alive) return '–'; const h = Array.from(c.rayHit);
-  if (h.includes(3)) { const o = world.creatures.find(z => z !== c && z.alive); return o ? o.name : 'en varelse'; }
+  if (h.includes(3)) { const o = world.creatures.find(z => z.id === c.seenId); return o ? o.name : 'en varelse'; }
   if (h.includes(2)) return 'en växt'; if (h.includes(1)) return 'mark och sten'; return 'ingenting särskilt';
 }
 function updCard() {
   const c = sel; if (!c || $('#card').classList.contains('hidden') || !world) return;
-  $('#cName').textContent = c.name + (c.alive ? '' : ' †'); $('#cTag').textContent = c.gen === 1 ? 'Stamförälder' : 'Generation ' + c.gen;
+  $('#cName').textContent = c.name + (c.alive ? '' : ' †'); $('#cTag').textContent = (c.gen === 1 ? 'Stamförälder' : 'Generation ' + c.gen) + (c.size < 1 ? ' · ung' : '');
   $('#cEn').style.width = clamp(c.energy / 120 * 100, 0, 100) + '%'; $('#cEnT').textContent = Math.max(0, Math.round(c.energy)) + ' / 120';
   const G = c.g;
   $('#cInfo').innerHTML = `Gör just nu: <b>${doing(c)}</b><br>Ser: <b>${esc(seeing(c))}</b><br>Ålder: <b>${world.fmtAge(c.age)}</b> · Måltider: <b>${c.meals}</b><br>` +
+    `Barn: <b>${c.kids}</b>${c.pnames ? ` · Föräldrar: <b>${esc(c.pnames.join(' och '))}</b>` : ''}${c.age < ADULT ? ' · <b>för ung för att få barn</b>' : ''}<br>` +
     `Kropp: ${G.seg} segment, ${G.legs} benpar${G.tail ? ', svans' : ''}${G.ant ? ', antenner' : ''}<br>Hjärna: ${c.br.H} neuroner, lär sig av belöning och smärta`;
   if (showBrain) drawBrain(c);
 }
@@ -223,9 +242,9 @@ let feed = [];
 function pushFeed(l) { feed.push({ msg: l.msg, wall: performance.now() }); if (feed.length > 3) feed.shift(); renderFeed(); }
 function renderFeed() { const now = performance.now(); $('#feed').innerHTML = feed.filter(f => now - f.wall < 9000).map(f => `<div class="glass">${esc(f.msg)}</div>`).join(''); }
 function renderChron() { $('#chronList').innerHTML = world.log.slice().reverse().map(l => `<div><em>${fmtT(l.t)}</em>${esc(l.msg)}</div>`).join(''); }
-$('#chronBtn').onclick = () => { const was = $('#chron').classList.contains('hidden'); $('#menu').classList.add('hidden'); $('#chron').classList.toggle('hidden', !was); if (was) renderChron(); };
+$('#chronBtn').onclick = () => { const was = $('#chron').classList.contains('hidden'); closePanels(); $('#chron').classList.toggle('hidden', !was); if (was) renderChron(); };
 $('#chronClose').onclick = () => $('#chron').classList.add('hidden');
-$('#menuBtn').onclick = () => { const was = $('#menu').classList.contains('hidden'); $('#chron').classList.add('hidden'); $('#menu').classList.toggle('hidden', !was); $('#confirmNew').classList.add('hidden'); };
+$('#menuBtn').onclick = () => { const was = $('#menu').classList.contains('hidden'); closePanels(); $('#menu').classList.toggle('hidden', !was); $('#confirmNew').classList.add('hidden'); };
 $('#menuClose').onclick = () => $('#menu').classList.add('hidden');
 $('#newWorldBtn').onclick = () => $('#confirmNew').classList.remove('hidden');
 $('#confirmNo').onclick = () => $('#confirmNew').classList.add('hidden');

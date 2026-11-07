@@ -38,7 +38,13 @@ class Renderer {
     }
     const COL = { 1: [118, 84, 58], 2: [118, 84, 58], 3: [104, 104, 114], 4: [204, 180, 122], 6: [150, 96, 74] };
     for (let ty = 0; ty < WH; ty++) for (let tx = 0; tx < WW; tx++) {
-      const t = world.tiles[ty * WW + tx]; if (t === T.AIR || t === T.WATER) continue;
+      const t = world.tiles[ty * WW + tx];
+      if (t === T.AIR || t === T.WATER) {
+        if (ty <= world.surface[tx]) continue;
+        // grottans bakvägg: mörk sten, så att man inte ser himlen genom berget
+        for (let py = 0; py < TS; py++) for (let px = 0; px < TS; px++) { const X = tx * TS + px, Y = ty * TS + py, n = (hash2(X, Y) - 0.5) * 10, o = (Y * pw + X) * 4; d[o] = 30 + n; d[o + 1] = 27 + n; d[o + 2] = 34 + n; d[o + 3] = 255; }
+        continue;
+      }
       const base = COL[t], dep = depth[ty * WW + tx], shade = 1 - Math.min(dep, 10) / 10 * 0.78;
       for (let py = 0; py < TS; py++) for (let px = 0; px < TS; px++) {
         const X = tx * TS + px, Y = ty * TS + py, n = hash2(X, Y);
@@ -142,6 +148,7 @@ class Renderer {
     if (nightA > 0.15) for (const c of world.creatures) if (c.alive) { const [ix, iy] = this.ipos(c), [ex0, ey0] = this.eyePos(c), ex = ex0 + wrapD(ix - c.x), ey = ey0 + iy - c.y; const x = this.cam.x + wrapD(ex - this.cam.x); g.fillStyle = `rgba(255,240,180,${nightA * 0.8})`; g.beginPath(); g.arc(x, ey, c.g.eye * 0.6, 0, 6.283); g.fill(); }
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     for (const c of world.creatures) {
+      if (c !== sel && (!c.alive || this.cam.zoom < 2.6)) continue; // namn bara när man är nära, så att det inte blir rörigt
       const [ix, iy] = this.ipos(c), [sx, sy] = this.toScreen(ix, iy - c.h - 6);
       if (sx < -50 || sx > this.W + 50) continue;
       g.font = '600 12px system-ui, sans-serif'; g.textAlign = 'center';
@@ -184,14 +191,14 @@ class Renderer {
     }
   }
 
-  eyePos(c) { const g = c.g, bodyY = c.y - (g.legL * 0.85 + g.segH / 2), front = (g.seg - 1) / 2 * g.segL * 0.75; return [c.x + c.face * (front + g.segL * 0.25), bodyY - g.segH * 0.15]; }
+  eyePos(c) { const g = c.g, s = c.size, bodyY = c.y - (g.legL * 0.85 + g.segH / 2) * s, front = ((g.seg - 1) / 2 * g.segL * 0.75 + g.segL * 0.25) * s; return [c.x + c.face * front, bodyY - g.segH * 0.15 * s]; }
 
   creature(c, x, y, g, t, selected) {
     const G = c.g, legH = G.legL * 0.85, bodyY = -(legH + G.segH / 2), breathe = 1 + Math.sin(t * 2.2 + c.id) * 0.03;
     const moving = Math.min(1, Math.abs(c.vx) / 20), air = !c.grounded;
-    g.save(); g.translate(x, y); g.scale(c.face, 1);
+    g.save(); g.translate(x, y); g.scale(c.face * c.size, c.size);
     // skugga
-    g.fillStyle = 'rgba(0,0,0,0.18)'; g.beginPath(); g.ellipse(0, 0.5, c.w * 0.55, 1.5, 0, 0, 6.283); g.fill();
+    g.fillStyle = 'rgba(0,0,0,0.18)'; g.beginPath(); g.ellipse(0, 0.5, c.w / c.size * 0.55, 1.5, 0, 0, 6.283); g.fill();
     const col = (l, s = 55) => `hsl(${G.hue},${s}%,${l}%)`, col2 = (l) => `hsl(${G.hue2},55%,${l}%)`;
     const segX = i => (i - (G.seg - 1) / 2) * G.segL * 0.75;
     // ben
@@ -230,8 +237,9 @@ class Renderer {
     c.prevAir = !c.grounded; c.prevVy = c.vy;
   }
   corpse(c, x, y, g) {
-    g.save(); g.translate(x, y); g.globalAlpha = 0.55;
-    g.fillStyle = `hsl(${c.g.hue},15%,40%)`; g.beginPath(); g.ellipse(0, -2, c.w * 0.5, 2.5, 0, 0, 6.283); g.fill();
+    const left = Math.max(0.15, Math.min(1, c.flesh / (25 * c.size)));
+    g.save(); g.translate(x, y); g.globalAlpha = 0.3 + 0.4 * left;
+    g.fillStyle = `hsl(${c.g.hue},${15 * left}%,${30 + 10 * left}%)`; g.beginPath(); g.ellipse(0, -1.5 * left - 0.5, c.w * 0.5 * (0.5 + 0.5 * left), 2.5 * left + 0.5, 0, 0, 6.283); g.fill();
     g.restore();
   }
 }
