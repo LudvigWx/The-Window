@@ -29,9 +29,9 @@ const VOX = ['mu', 'mo', 'ma', 'na', 'ne', 'ni', 'ki', 'ti']; // låg ton → h�
 const HARD = { 1: 2.5, 2: 2.5, 4: 1.6, 6: 5, 3: 14 };      // sekunder att gräva bort en ruta
 const MAT = { 1: 'jord', 2: 'jord', 3: 'sten', 4: 'sand', 6: 'lera', 9: 'bär' };
 const FOOD = 9;
-const CTX = [['food', 'nära mat'], ['mate', 'nära en möjlig partner'], ['child', 'nära sitt barn'], ['young', 'när talaren är ung'], ['hungry', 'när talaren är hungrig'], ['dark', 'i mörker'], ['alone', 'när talaren är ensam']];
+const CTX = [['food', 'nära mat'], ['mate', 'nära en möjlig partner'], ['child', 'nära sitt barn'], ['young', 'när talaren är ung'], ['hungry', 'när talaren är hungrig'], ['dark', 'i mörker'], ['alone', 'när talaren är ensam'], ['danger', 'när en jägare är nära'], ['cold', 'i kyla']];
 const OUT_ACTIVE = [1, 1, 1, 1, 1, 1, 1, 1, 1]; // alla utgångar är inkopplade i kroppen (fas 3)
-const MAXPOP = 140;      // tekniskt tak för vad en mobil orkar
+const MAXPOP = 170;      // tekniskt tak för vad en mobil orkar
 const EMAX = 180;        // över 120 lagras energin som fett – en buffert inför vintern
 const ADULT = 2 * DAY;   // vuxen efter två dygn
 const GROW_T = 1.5 * DAY; // tid att växa till full storlek
@@ -331,6 +331,7 @@ class World {
     return { H, wih, whh: f(H * H, 0.2), bh: f(H, 0.1), who: f(NO * H, 0.5), bo };
   }
   bodySize(g) { const L = g.segL * (0.75 * (g.seg - 1) + 1.2); return { w: L * 0.8, h: g.segH + g.legL * 0.85, L }; }
+  mass(c) { return clamp(Math.sqrt(c.w * c.h / 110), 0.45, 2.4); } // kroppens tyngd jämfört med en vanlig varelse
   applySize(c) { const s = this.bodySize(c.g); c.w = s.w * c.size; c.h = s.h * c.size; }
   makeCreature(name, x, g, br, gen, parents, opt = {}) {
     const H = br.H, sz = opt.size || 1, s = this.bodySize(g);
@@ -435,8 +436,8 @@ class World {
     for (const sd of this.sounds) {
       if (sd.id === c.id) continue;
       const age = this.time - sd.t; if (age > 0.4) continue;
-      const dx = wrapD(sd.x - c.x), dist = Math.abs(dx) + Math.abs(sd.y - c.y) * 0.5; if (dist > 220) continue;
-      const loud = (1 - dist / 220) * (1 - age / 0.4);
+      const dx = wrapD(sd.x - c.x), dist = Math.abs(dx) + Math.abs(sd.y - c.y) * 0.5; if (dist > 320) continue;
+      const loud = (1 - dist / 320) * (1 - age / 0.4);
       if (Math.sign(dx) === c.face || dx === 0) fr = Math.max(fr, loud); else bk = Math.max(bk, loud);
       if (loud > best) { best = loud; pitch = sd.p; }
     }
@@ -531,12 +532,12 @@ class World {
     if (!plant) for (const it of this.items) { if (Math.abs(wrapD(mx - it.x)) < 4 && Math.abs(c.y - it.y) < 10) { c.touch = 1; item = it; break; } }
     if (!plant && !item) for (const d of this.corpses) { if (d.flesh > 0.2 && Math.abs(wrapD(mx - d.x)) < d.w / 2 + 2 && Math.abs(c.y - d.y) < 10) { c.touch = 1; corpse = d; break; } }
     // jakt: bara den som har tänder för det (köttätargen över 0,25) och inte är mycket mindre än bytet
-    if (!plant && !item && !corpse && c.touchO && c.touchO.alive && (c.g.carn || 0) > 0.25 && c.size >= c.touchO.size * 0.8) prey = c.touchO;
+    if (!plant && !item && !corpse && c.touchO && c.touchO.alive && (c.g.carn || 0) > 0.25 && this.mass(c) >= this.mass(c.touchO) * 0.7) prey = c.touchO;
     const carn = c.g.carn || 0, plantEff = 1 - 0.6 * carn, meatEff = 0.3 + 0.9 * carn;
     if (c.out[2] > 0) {
       c.energy -= 0.01 * dt;
       if ((c.touch || prey || c.carry === FOOD) && c.energy < EMAX) {
-        let bite = 3 * dt * (0.5 + c.size * 0.5), gain = 0;
+        let bite = 3 * dt * (0.5 + c.size * 0.5) * Math.sqrt(this.mass(c)), gain = 0;
         if (plant) {
           bite = Math.min(plant.b - 0.2, bite);
           const poison = (plant.tox || 0) * (1 - (c.g.tol || 0));
@@ -577,7 +578,7 @@ class World {
     // törst och kyla
     const tl = this.tempAt(c.x, c.y - c.h / 2);
     let huddle = 0; for (const o of this.bins[wrapT(Math.floor(c.x / TS))]) if (o !== c) huddle++;
-    c.cold = Math.max(0, 4 - tl - Math.min(6, huddle * 2));
+    c.cold = Math.max(0, 4 - tl - Math.min(6, huddle * 2)) / Math.sqrt(this.mass(c));
     c.hyd -= dt * (0.025 + (tl > 22 ? (tl - 22) * 0.004 : 0));
     if (c.hyd <= 0) { c.hyd = 0; c.energy -= 0.25 * dt; c.pain = Math.min(1, c.pain + dt * 0.1); }
     if (c.cold > 4 && Math.floor((c.y - c.h / 2) / TS) - this.surface[wrapT(Math.floor(c.x / TS))] > 1) this.first('shelter', `${c.name} söker värme under jord medan det är kallt ute.`);
@@ -609,7 +610,7 @@ class World {
     c.voiceCd -= dt;
     if (c.out[5] > 0.3 && c.voiceCd <= 0 && c.energy > 3) {
       const p = c.out[6], syl = VOX[clamp(Math.floor((p + 1) / 2 * 8), 0, 7)];
-      c.energy -= 0.012; c.voiceCd = 0.28; c.spoke++;
+      c.energy -= 0.02; c.voiceCd = 0.28; c.spoke++;
       this.sounds.push({ x: c.x, y: c.y - c.h * 0.7, p, t: this.time, id: c.id, syl, size: c.size, timbre: c.g.hue2 });
       if (c.utt.length < 4) c.utt.push(syl);
       c.lastSyl = this.time; c.say = { txt: c.utt.join('-'), t: this.time };
@@ -645,7 +646,7 @@ class World {
       }
     }
     // ämnesomsättning: allt kostar
-    const metab = 0.02 + 0.0015 * c.w + 0.0004 * c.br.H + Math.abs(c.vx) * 0.0006 + (c.size < 1 ? 0.02 : 0) + (c.carry ? 0.01 : 0) + c.cold * 0.0025 + (c.g.tol || 0) * 0.01;
+    const metab = 0.02 + 0.0015 * c.w + 0.0004 * c.br.H + Math.abs(c.vx) * 0.0006 + (c.size < 1 ? 0.02 : 0) + (c.carry ? 0.01 : 0) + c.cold * 0.0025 + (c.g.tol || 0) * 0.01 + c.g.legs * 0.0008;
     c.energy -= metab * dt;
     c.pain *= 1 - dt * 0.8;
     c.walk += Math.abs(c.vx) * dt * 0.28;
@@ -782,6 +783,7 @@ class World {
     ctx.mate = c.age > ADULT && others.some(o => o.age > ADULT && Math.abs(wrapD(o.x - c.x)) < 40) ? 1 : 0;
     ctx.child = others.some(o => o.parents && o.parents.includes(c.id) && Math.abs(wrapD(o.x - c.x)) < 60) ? 1 : 0;
     ctx.young = c.size < 1 ? 1 : 0; ctx.hungry = c.energy < 40 ? 1 : 0; ctx.dark = this.lightAt(c.x, c.y) < 0.3 ? 1 : 0; ctx.alone = others.length ? 0 : 1;
+    ctx.danger = this.time - c.attackedT < 5 || others.some(o => (o.g.carn || 0) > 0.25 && this.mass(o) >= this.mass(c) * 0.7 && Math.abs(wrapD(o.x - c.x)) < 70) ? 1 : 0; ctx.cold = c.cold > 2 ? 1 : 0;
     let e = this.lex[w];
     if (!e) {
       const keys = Object.keys(this.lex);
@@ -820,11 +822,11 @@ class World {
     const r = this.rng, g = {}, pick = k => (r.next() < 0.5 ? a[k] : b[k]);
     const mutF = (k, sd, lo, hi) => { g[k] = clamp(pick(k) * Math.exp(r.gauss() * sd), lo, hi); };
     const mutI = (k, lo, hi) => { g[k] = pick(k); if (r.next() < 0.05) g[k] = clamp(g[k] + (r.next() < 0.5 ? -1 : 1), lo, hi); };
-    mutF('segL', 0.05, 4, 16); mutF('segH', 0.05, 3, 13); mutF('legL', 0.05, 2.5, 14); mutF('eye', 0.05, 1, 4);
+    mutF('segL', 0.05, 2, 22); mutF('segH', 0.05, 2, 18); mutF('legL', 0.05, 1.5, 20); mutF('eye', 0.05, 0.6, 6);
     mutF('explore', 0.08, 0.05, 0.6); mutF('lr', 0.08, 0.0005, 0.03); mutF('maxAge', 0.05, 6 * DAY, 60 * DAY);
     g.tol = clamp((pick('tol') || 0) + r.gauss() * 0.03, 0, 1);
     g.carn = clamp((pick('carn') || 0) + r.gauss() * 0.035, 0, 1);
-    mutI('seg', 1, 5); mutI('legs', 0, 5); mutI('pattern', 0, 2); mutI('hid', 3, 40);
+    mutI('seg', 1, 8); mutI('legs', 0, 10); mutI('pattern', 0, 2); mutI('hid', 3, 64);
     for (const k of ['ant', 'tail']) { g[k] = pick(k); if (g[k] === 0 && r.next() < 0.03) g[k] = r.range(2, 6); else if (g[k] > 0) { g[k] *= Math.exp(r.gauss() * 0.06); if (r.next() < 0.02) g[k] = 0; } }
     for (const k of ['hue', 'hue2']) g[k] = (pick(k) + r.gauss() * 7 + 360) % 360;
     return g;
