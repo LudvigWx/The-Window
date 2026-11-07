@@ -293,6 +293,19 @@ class World {
     const dry = dt / (2 * DAY) * (this.temp > 0 ? 1 + this.temp / 15 : 0.3);
     for (let x = 0; x < WW; x++) { const tgt = this.near[x] ? 0.95 : 0.3 * this.zoneWet(x); if (this.moist[x] > tgt) this.moist[x] -= (this.moist[x] - tgt) * dry * 3; else this.moist[x] += (tgt - this.moist[x]) * dt / DAY; }
   }
+  // fröbanken: vilande frön i jorden gror där det finns plats, när det är varmt och fuktigt nog
+  sprout(dt) {
+    const r = this.rng, tries = Math.max(1, Math.round(WW / 60));
+    for (let k = 0; k < tries; k++) {
+      const x = r.int(WW);
+      if (this.plantAt[x] || !this.isGrowable(x) || this.localTemp(x) < 6 || this.plants.length >= 320 * WW / 240) continue;
+      if (r.next() > 0.05 * dt * Math.min(1.2, this.moist[x])) continue;
+      // fröet kommer från en växt i närheten om det finns någon, annars från jordens gamla frön
+      let parent = null; for (let d = 1; d < 25 && !parent; d++) parent = this.plantAt[wrapT(x + d)] || this.plantAt[wrapT(x - d)];
+      const np = this.newPlant(x, parent); np.b = 1;
+      this.first('seedbank', 'Nya växter gror ur frön som legat gömda i jorden.');
+    }
+  }
   // jorden återhämtar sig långsamt mot sin naturliga näringsnivå
   updateSoil(dt) { for (let x = 0; x < WW; x++) this.fert[x] += (1 - this.fert[x]) * dt / (4 * DAY); }
   fertilize(x, amt) { for (let k = -2; k <= 2; k++) { const c = wrapT(Math.floor(x / TS) + k); this.fert[c] = Math.min(3, this.fert[c] + amt * (k === 0 ? 0.4 : k * k === 1 ? 0.2 : 0.1)); } }
@@ -655,7 +668,7 @@ class World {
     this.time += DT; this.stepN = (this.stepN || 0) + 1;
     this.wind = Math.sin(this.time * 0.05) * 0.6 + Math.sin(this.time * 0.013) * 0.4;
     this.waterAcc += DT; if (this.waterAcc >= 0.5) { if (this.wpos) this.updateWater(this.waterAcc); this.waterAcc = 0; }
-    this.plantAcc += DT; if (this.plantAcc >= 1) { this.updateWeather(this.plantAcc); this.updatePlants(this.plantAcc); this.updateSoil(this.plantAcc); this.decay(this.plantAcc); this.rotItems(this.plantAcc); this.plantAcc = 0; }
+    this.plantAcc += DT; if (this.plantAcc >= 1) { this.updateWeather(this.plantAcc); this.updatePlants(this.plantAcc); this.sprout(this.plantAcc); this.updateSoil(this.plantAcc); this.decay(this.plantAcc); this.rotItems(this.plantAcc); this.plantAcc = 0; }
     this.rebuildBins();
     if (this.sounds.length && this.time - this.sounds[0].t > 0.5) this.sounds = this.sounds.filter(sd => this.time - sd.t <= 0.5);
     for (const c of this.creatures) {
