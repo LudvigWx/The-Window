@@ -200,7 +200,11 @@ function buildChips() {
   all.onclick = () => { follow = null; sel = null; $('#card').classList.add('hidden'); ren.cam.zoom = ren.minZoom(); refreshChips(); };
   box.appendChild(all); refreshChips();
 }
-function refreshChipLabels(alive) { const b = $('#peopleChip'); if (b) b.textContent = `👪 Alla (${alive})`; }
+function refreshChipLabels(alive) {
+  const b = $('#peopleChip'); if (b) b.textContent = `👪 Alla (${alive})`;
+  // stamföräldrarnas knappar: markera de döda med † och ta bort dem som inte längre finns i dalen
+  document.querySelectorAll('#chips .chip[data-id]').forEach(ch => { const c = world.creatures.find(z => z.id === +ch.dataset.id); if (!c) ch.remove(); else if (!c.alive && !ch.textContent.includes('†')) ch.innerHTML += ' †'; });
+}
 function closePanels() { ['#chron', '#menu', '#people', '#lex', '#histP'].forEach(s => $(s).classList.add('hidden')); }
 function renderPeople() {
   const al = world.creatures.filter(c => c.alive).sort((a, b) => b.gen - a.gen || a.age - b.age);
