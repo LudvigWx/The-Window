@@ -590,7 +590,8 @@ class World {
     if (c.out[7] > 0 && c.age > ADULT && c.energy > 70 && c.mateCd <= 0 && this.aliveCount < MAXPOP) {
       const cc = wrapT(Math.floor(c.x / TS));
       search: for (let k = -2; k <= 2; k++) for (const o of this.bins[wrapT(cc + k)]) {
-        if (o === c || o.out[7] <= 0 || o.age <= ADULT || o.energy <= 70 || o.mateCd > 0 || this.gdist(c.g, o.g) > 0.3) continue;
+        if (o === c || o.out[7] <= 0 || o.age <= ADULT || o.energy <= 70 || o.mateCd > 0) continue;
+        const gd = this.gdist(c.g, o.g); if (gd > 0.3 && this.rng.next() < (gd - 0.3) / 0.2) continue; // ju mer olika, desto svårare att få barn
         if (Math.abs(wrapD(o.x - c.x)) < (c.w + o.w) / 2 + 3 && Math.abs(o.y - c.y) < 10) { this.birth(c, o); break search; }
       }
     }
@@ -698,7 +699,7 @@ class World {
   gdist(a, b) {
     const dh = Math.abs(((a.hue - b.hue + 540) % 360) - 180) / 180;
     return Math.sqrt(((a.segL - b.segL) / 10) ** 2 + ((a.segH - b.segH) / 8) ** 2 + ((a.legL - b.legL) / 9) ** 2 + ((a.seg - b.seg) / 4) ** 2 + ((a.legs - b.legs) / 4) ** 2
-      + (dh * 0.6) ** 2 + ((a.carn || 0) - (b.carn || 0)) ** 2 + ((a.tol || 0) - (b.tol || 0)) ** 2 + ((a.eye - b.eye) / 3) ** 2);
+      + (dh * 0.12) ** 2 + ((a.carn || 0) - (b.carn || 0)) ** 2 + ((a.tol || 0) - (b.tol || 0)) ** 2 + ((a.eye - b.eye) / 3) ** 2);
   }
   updateSpecies() {
     const al = this.creatures.filter(c => c.alive); if (!al.length) { this.species = []; return; }
@@ -706,7 +707,7 @@ class World {
     const grp = new Array(al.length).fill(-1); let ng = 0;
     for (let i = 0; i < al.length; i++) {
       if (grp[i] >= 0) continue; grp[i] = ng; const q = [i];
-      while (q.length) { const a = q.pop(); for (let j = 0; j < al.length; j++) if (grp[j] < 0 && this.gdist(al[a].g, al[j].g) < 0.28) { grp[j] = ng; q.push(j); } }
+      while (q.length) { const a = q.pop(); for (let j = 0; j < al.length; j++) if (grp[j] < 0 && this.gdist(al[a].g, al[j].g) < 0.4) { grp[j] = ng; q.push(j); } }
       ng++;
     }
     const groups = []; for (let k = 0; k < ng; k++) groups.push(al.filter((_, i) => grp[i] === k));
@@ -719,7 +720,7 @@ class World {
         if (members.length < 3 && old.length) { for (const c of members) c.sp = c.sp || 0; continue; }
         const eldest = members.reduce((a, b) => (a.age > b.age ? a : b));
         sp = { id: this.nextSp++, name: `${eldest.name}-folket`, born: this.time, hue: eldest.g.hue };
-        if (old.length) this.chron(`En ny art har uppstått: ${sp.name} (${members.length} varelser). De har glidit så långt ifrån de andra att de inte längre kan få barn med dem.`);
+        if (old.length) this.chron(`En ny art har uppstått: ${sp.name} (${members.length} varelser). De har glidit så långt ifrån de andra att de nästan aldrig kan få barn med dem.`);
       }
       sp.n = members.length; sp.carn = members.reduce((a, c) => a + (c.g.carn || 0), 0) / members.length;
       for (const c of members) c.sp = sp.id;
