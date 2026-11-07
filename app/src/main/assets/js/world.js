@@ -233,12 +233,15 @@ class World {
         if (tl[si + WW] === T.AIR || pressure) { tl[i] = T.AIR; tl[si] = T.WATER; this.remW(i); this.addW(si); break; }
       }
     }
+    // hur mycket vatten finns ovan jord? (vatten i grottor räknas inte, det når inte regnet)
+    let surf = 0; for (const i of this.wlist) { const x = i % WW, y = (i / WW) | 0; if (y < this.surface[x]) surf++; }
+    this.surfWater = surf;
     // avdunstning från ytan och pölar som sjunker ner i jorden
     const evap = this.weather.rain > 0 ? 0 : 0.0002 * (0.2 + this.daylight()) * (this.temp > 0 ? 1 + this.temp / 20 : 0.3);
     for (let k = this.wlist.length - 1; k >= 0; k--) {
       const i = this.wlist[k]; if (i < WW || tl[i - WW] !== T.AIR) continue;
       const x = i % WW, y = (i / WW) | 0;
-      if (r.next() < evap * dt) { tl[i] = T.AIR; this.remW(i); continue; }
+      if (r.next() < (y >= this.surface[x] ? evap * 0.3 : evap) * dt) { tl[i] = T.AIR; this.remW(i); continue; }
       const below = tl[i + WW];
       if ((below === T.DIRT || below === T.GRASS || below === T.SAND) && tl[y * WW + wrapT(x - 1)] !== T.WATER && tl[y * WW + wrapT(x + 1)] !== T.WATER && r.next() < 0.004 * dt) { tl[i] = T.AIR; this.remW(i); this.moist[x] = Math.min(1.5, this.moist[x] + 0.3); }
     }
@@ -255,7 +258,7 @@ class World {
     // regn blir pölar och fukt i marken; under nollan blir det snö
     if (W8.rain > 0) {
       if (this.temp < 0) this.snow = Math.min(1, this.snow + W8.rain * dt / 600);
-      else if (this.wlist.length < (this.water0 || 200) * 2.5) for (let n = 0; n < 3; n++) if (this.rng.next() < W8.rain * 0.25 * dt) {
+      else if ((this.surfWater ?? this.wlist.length) < (this.water0 || 200) * 1.5) for (let n = 0; n < 3; n++) if (this.rng.next() < W8.rain * 0.25 * dt) {
         const x = this.rng.int(WW), y = this.surface[x] - 1;
         if (y > 0 && this.tiles[y * WW + x] === T.AIR && !this.bins[x].length) { this.tiles[y * WW + x] = T.WATER; this.addW(y * WW + x); }
       }
@@ -614,7 +617,7 @@ class World {
     }
     const [a, b] = this.creatures;
     if (a && b && a.gen === 1 && b.gen === 1 && a.alive && b.alive && Math.abs(wrapD(a.x - b.x)) < (a.w + b.w) / 2 + 4 && Math.abs(a.y - b.y) < 12) this.first('meet', `${a.name} och ${b.name} möts för första gången.`);
-    const d = this.dayNumber(); if (d !== this.lastDay) { if (this.lastDay && this.aliveCount <= 6) this.chron(`Dag ${d} gryr i dalen.`); this.lastDay = d; this.popHist.push([this.time, this.aliveCount, this.maxGen]); if (this.popHist.length > 400) this.popHist.shift(); }
+    const d = this.dayNumber(); if (d !== this.lastDay) { if (this.lastDay && this.aliveCount > 0 && this.aliveCount <= 6) this.chron(`Dag ${d} gryr i dalen.`); this.lastDay = d; this.popHist.push([this.time, this.aliveCount, this.maxGen]); if (this.popHist.length > 400) this.popHist.shift(); }
   }
 
   // ---------- liv och död ----------

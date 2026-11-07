@@ -132,6 +132,7 @@ setInterval(() => {
   const wx = world.weather && world.weather.rain > 0 ? (world.temp < 0 ? ' · snö' : ' · regn') : '';
   $('#clock').innerHTML = `${fmtT(world.time)}<small>${world.season()} ${Math.round(world.temp)}°${wx} · ${alive} lever</small>`;
   if (++chipTick % 8 === 0) refreshChipLabels(alive);
+  $('#extinct').classList.toggle('hidden', !(alive === 0 && !busy && $('#card').classList.contains('hidden') && $('#menu').classList.contains('hidden') && $('#chron').classList.contains('hidden') && $('#lex').classList.contains('hidden')));
   if (!$('#people').classList.contains('hidden') && chipTick % 4 === 0) renderPeople();
   const rs = effWin.reduce((a, b) => a + b[0], 0), ss = effWin.reduce((a, b) => a + b[1], 0), eff = rs ? ss / rs : 0;
   const f = x => x < 10 ? x.toFixed(1) + '×' : Math.round(x) + '×';
@@ -252,6 +253,7 @@ $('#chronClose').onclick = () => $('#chron').classList.add('hidden');
 $('#menuBtn').onclick = () => { const was = $('#menu').classList.contains('hidden'); closePanels(); $('#menu').classList.toggle('hidden', !was); $('#confirmNew').classList.add('hidden'); };
 $('#menuClose').onclick = () => $('#menu').classList.add('hidden');
 $('#newWorldBtn').onclick = () => $('#confirmNew').classList.remove('hidden');
+$('#extinctNew').onclick = () => { closePanels(); $('#menu').classList.remove('hidden'); $('#confirmNew').classList.remove('hidden'); };
 $('#confirmNo').onclick = () => $('#confirmNew').classList.add('hidden');
 $('#confirmYes').onclick = () => { store.wipe(); world = null; sel = follow = null; $('#menu').classList.add('hidden'); $('#card').classList.add('hidden'); $('#chips').innerHTML = ''; showIntro(); };
 
