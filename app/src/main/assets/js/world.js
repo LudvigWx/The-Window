@@ -24,7 +24,7 @@ const IN_LABELS = [
 ];
 const OUT_LABELS = ['gå', 'hoppa', 'ät', 'greppa', 'gräv', 'röst', 'tonhöjd', 'para', 'ge'];
 const VOX = ['mu', 'mo', 'ma', 'na', 'ne', 'ni', 'ki', 'ti']; // låg ton → hög ton, så att ljuden kan skrivas som text
-const HARD = { 1: 1.2, 2: 1.2, 4: 0.8, 6: 2.5, 3: 7 };      // sekunder att gräva bort en ruta
+const HARD = { 1: 2.5, 2: 2.5, 4: 1.6, 6: 5, 3: 14 };      // sekunder att gräva bort en ruta
 const MAT = { 1: 'jord', 2: 'jord', 3: 'sten', 4: 'sand', 6: 'lera' };
 const CTX = [['food', 'nära mat'], ['mate', 'nära en möjlig partner'], ['child', 'nära sitt barn'], ['young', 'när talaren är ung'], ['hungry', 'när talaren är hungrig'], ['dark', 'i mörker'], ['alone', 'när talaren är ensam']];
 const OUT_ACTIVE = [1, 1, 1, 1, 1, 1, 1, 1, 1]; // alla utgångar är inkopplade i kroppen (fas 3)
@@ -195,9 +195,9 @@ class World {
       const p = this.plants[i];
       p.age += dt;
       if (!this.isGrowable(p.x) || p.age > p.life) { this.plants.splice(i, 1); this.plantAt[p.x] = null; continue; }
-      const f = this.fert[p.x], grown = p.grow * light * this.moisture(p.x) * (0.3 + 0.7 * clamp(f, 0, 2)) * (1 - p.b / p.max) * dt;
+      const f = this.fert[p.x], grown = 1.3 * p.grow * light * this.moisture(p.x) * (0.3 + 0.7 * clamp(f, 0, 2)) * (1 - p.b / p.max) * dt;
       p.b += grown; this.fert[p.x] = Math.max(0, f - grown * 0.004);
-      if (p.b > p.max * 0.7 && this.plants.length < 230 && this.rng.next() < 0.004 * dt) {
+      if (p.b > p.max * 0.7 && this.plants.length < 320 && this.rng.next() < 0.006 * dt) {
         const nx = wrapT(p.x + (this.rng.next() < 0.5 ? -1 : 1) * (1 + this.rng.int(6)));
         if (this.isGrowable(nx) && !this.plantAt[nx]) this.newPlant(nx, p);
       }
@@ -223,7 +223,9 @@ class World {
     const bo = f(NO, 0.1);
     // Dyra handlingar börjar som ovanliga (en medfödd återhållsamhet) – evolutionen kan ändra det.
     bo[3] -= 1.2; bo[4] -= 1.5; bo[5] -= 0.6; bo[8] -= 1.2;
-    return { H, wih: f(H * NI, 0.5), whh: f(H * H, 0.2), bh: f(H, 0.1), who: f(NO * H, 0.5), bo };
+    const wih = f(H * NI, 0.5);
+    for (let j = 0; j < H; j++) for (const i of [21, 22, 24, 25, 26]) wih[j * NI + i] *= 0.3; // nya sinnen börjar som svaga signaler
+    return { H, wih, whh: f(H * H, 0.2), bh: f(H, 0.1), who: f(NO * H, 0.5), bo };
   }
   bodySize(g) { const L = g.segL * (0.75 * (g.seg - 1) + 1.2); return { w: L * 0.8, h: g.segH + g.legL * 0.85, L }; }
   applySize(c) { const s = this.bodySize(c.g); c.w = s.w * c.size; c.h = s.h * c.size; }
@@ -270,17 +272,19 @@ class World {
     let pop = []; for (let i = 0; i < POP; i++) { const g = base.makeGenes(); pop.push({ g, br: base.makeBrain(g), fresh: true }); }
     let best = [];
     for (let gen = 0; gen < GENS; gen++) {
-      for (const ind of pop) {
-        const w = new World(seed + 1 + gen, null);
-        w.tiles = base.tiles; w.surface = base.surface; w.lake = base.lake;
+      // förfäderna lever två och två, så att de också måste klara av att höra och möta varandra
+      const order = pop.slice(); for (let i = order.length - 1; i > 0; i--) { const j = r.int(i + 1); [order[i], order[j]] = [order[j], order[i]]; }
+      for (let pi = 0; pi < order.length; pi += 2) {
+        const pair = order.slice(pi, pi + 2);
+        const w = new World(seed + 1 + gen * 100 + pi, null);
+        w.tiles = Uint8Array.from(base.tiles); w.surface = Int16Array.from(base.surface); w.lake = base.lake;
         w.plants = base.plants.map(p => ({ ...p, b: p.b * 0.5 })); w.plantAt = new Array(WW).fill(null); for (const p of w.plants) w.plantAt[p.x] = p;
         w.time = r.range(0, DAY); w.chron = () => {}; w.first = () => {};
         let tx = r.int(WW); for (let k = 0; k < WW && (w.tile(tx, w.surface[tx]) === T.WATER || w.tile(tx, w.surface[tx] - 1) !== T.AIR); k++) tx = wrapT(tx + 7);
-        const c = w.makeCreature('?', tx * TS + TS / 2, ind.g, { H: ind.br.H, wih: Float32Array.from(ind.br.wih), whh: Float32Array.from(ind.br.whh), bh: Float32Array.from(ind.br.bh), who: Float32Array.from(ind.br.who), bo: Float32Array.from(ind.br.bo) });
-        c.energy = 30; let eaten = 0, lived = 0;
-        for (let t = 0; t < EVAL / DT && c.alive; t++) { w.step(); eaten += c.gain; lived += DT; }
-        const f = lived + eaten * 0.3 + (c.alive ? 60 : 0); ind.fit = ind.fit === undefined || ind.fresh ? f : (ind.fit + f) / 2; ind.fresh = false;
-        yield { gen: gen + 1, gens: GENS, frac: (gen + (pop.indexOf(ind) + 1) / POP) / GENS };
+        const cs = pair.map((ind, i) => { const c = w.makeCreature('?', wrapX(tx * TS + TS / 2 + i * 40), ind.g, { H: ind.br.H, wih: Float32Array.from(ind.br.wih), whh: Float32Array.from(ind.br.whh), bh: Float32Array.from(ind.br.bh), who: Float32Array.from(ind.br.who), bo: Float32Array.from(ind.br.bo) }); c.energy = 30; c.eaten = 0; c.lived = 0; return c; });
+        for (let t = 0; t < EVAL / DT && cs.some(c => c.alive); t++) { w.step(); for (const c of cs) if (c.alive) { c.eaten += c.gain; c.lived += DT; } }
+        pair.forEach((ind, i) => { const c = cs[i], f = c.lived + c.eaten * 0.3 + (c.alive ? 60 : 0); ind.fit = ind.fit === undefined || ind.fresh ? f : (ind.fit + f) / 2; ind.fresh = false; });
+        yield { gen: gen + 1, gens: GENS, frac: (gen + Math.min(1, (pi + 2) / POP)) / GENS };
       }
       pop.sort((a, b) => b.fit - a.fit);
       best = pop.slice(0, 4);
@@ -396,6 +400,7 @@ class World {
     const nx = wrapX(c.x + c.vx * dt);
     if (!this.boxSolid(nx, c.y, c.w, c.h)) c.x = nx;
     else if ((c.grounded || inWater) && !this.boxSolid(nx, c.y - TS, c.w, c.h)) { c.x = nx; c.y -= TS; } // små steg och strandkanter går att kliva upp på
+    else if (c.grounded && g.legs > 0 && !this.boxSolid(c.x, c.y - 2 * TS, c.w, c.h) && !this.boxSolid(nx, c.y - 2 * TS, c.w, c.h)) { c.x = nx; c.y -= 2 * TS; c.energy -= 0.05; } // ben kan klättra upp för högre kanter
     else { c.vx = 0; c.wall = 1; }
     // Y-led
     const ny = c.y + c.vy * dt;
@@ -466,7 +471,7 @@ class World {
       let tgt = null; for (const [tx, ty] of cands) { const t = this.tile(tx, ty); if (HARD[t] && ty < WH - 2) { tgt = [wrapT(tx), ty, t]; break; } }
       if (tgt) {
         const key = tgt[1] * WW + tgt[0]; if (key !== c.digKey) { c.digKey = key; c.digP = 0; }
-        c.digP += dt / HARD[tgt[2]]; c.energy -= 0.08 * dt;
+        c.digP += dt / HARD[tgt[2]]; c.energy -= 0.25 * dt;
         if (c.digP >= 1) {
           this.setTileLive(tgt[0], tgt[1], T.AIR); c.digP = 0; c.digKey = -1; this.stats.digs++;
           if (!c.carry && c.out[3] > 0) { c.carry = tgt[2] === T.GRASS ? T.DIRT : tgt[2]; this.first('carry', `${c.name} bär med sig ${MAT[c.carry]} i munnen.`); }
@@ -677,6 +682,7 @@ class World {
       const mig = b => {
         const H = b.H, ni = b.wih.length / H, no = b.bo.length, wih = new Float32Array(H * NI), who = new Float32Array(NO * H), bo = new Float32Array(NO);
         for (let j = 0; j < H; j++) for (let i = 0; i < Math.min(ni, NI); i++) wih[j * NI + i] = b.wih[j * ni + i];
+        if (ni < NI) for (let j = 0; j < H; j++) { wih[j * NI + 21] = 0; wih[j * NI + 22] = 0; } // hörseln var död förut – dess gamla slumpkopplingar nollställs
         for (let m = 0; m < Math.min(no, NO); m++) { bo[m] = b.bo[m]; for (let j = 0; j < H; j++) who[m * H + j] = b.who[m * H + j]; }
         return { H, wih, whh: F(b.whh), bh: F(b.bh), who, bo };
       };
