@@ -237,7 +237,7 @@ class World {
     let surf = 0; for (const i of this.wlist) { const x = i % WW, y = (i / WW) | 0; if (y < this.surface[x]) surf++; }
     this.surfWater = surf;
     // avdunstning från ytan och pölar som sjunker ner i jorden
-    const evap = this.weather.rain > 0 ? 0 : 0.0002 * (0.2 + this.daylight()) * (this.temp > 0 ? 1 + this.temp / 20 : 0.3);
+    const evap = this.weather.rain > 0 ? 0 : 0.00015 * (0.2 + this.daylight()) * (this.temp > 0 ? 1 + this.temp / 20 : 0.3);
     for (let k = this.wlist.length - 1; k >= 0; k--) {
       const i = this.wlist[k]; if (i < WW || tl[i - WW] !== T.AIR) continue;
       const x = i % WW, y = (i / WW) | 0;
@@ -259,7 +259,8 @@ class World {
     if (W8.rain > 0) {
       if (this.temp < 0) this.snow = Math.min(1, this.snow + W8.rain * dt / 600);
       else if ((this.surfWater ?? this.wlist.length) < (this.water0 || 200) * 1.5) for (let n = 0; n < 3; n++) if (this.rng.next() < W8.rain * 0.25 * dt) {
-        const x = this.rng.int(WW), y = this.surface[x] - 1;
+        // regnet landar på det översta i kolumnen – mark eller vattenyta
+        const x = this.rng.int(WW); let y = 0; while (y < WH - 1 && this.tiles[y * WW + x] === T.AIR) y++; y--;
         if (y > 0 && this.tiles[y * WW + x] === T.AIR && !this.bins[x].length) { this.tiles[y * WW + x] = T.WATER; this.addW(y * WW + x); }
       }
       for (let x = 0; x < WW; x++) this.moist[x] = Math.min(1.5, this.moist[x] + W8.rain * dt / 300);
