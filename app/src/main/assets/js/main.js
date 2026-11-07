@@ -90,9 +90,7 @@ function catchUp(sec) {
     if (hs.length > 2) { $('#catchSpark').classList.remove('hidden'); spark($('#catchSpark'), hs.map(h => h.pop)); } else $('#catchSpark').classList.add('hidden');
     $('#catchTxt').textContent = cut ? `Du var borta i ${fmtDur(sec)}. Telefonen hann räkna ${fmtDur(done * DT)} av det – resten av tiden vilade dalen.` : `Det har gått ${fmtDur(sec)} i dalen. Nu är det ${fmtT(world.time).toLowerCase()}.`;
     $('#catchSum').innerHTML = story.map(s => `<div><b>${esc(s)}</b></div>`).join('') + (ev.length ? ev.slice(-12).map(l => `<div>${esc(l.msg)}</div>`).join('') : '<div>Inget särskilt hände. De har levt sina liv.</div>');
-    $('#catchOk').classList.remove('hidden'); $('#catchStory').classList.add('hidden');
-    $('#catchNarrate').classList.toggle('hidden', !apiKey());
-    catchFrom = world.time - done * DT;
+    $('#catchOk').classList.remove('hidden');
   };
   setTimeout(tick, 30);
 }
@@ -425,63 +423,6 @@ function renderKin(c) {
   $('#kin').innerHTML = lines.map(l => `<div>${l}</div>`).join('');
   document.querySelectorAll('#kin a[data-sel]').forEach(a => a.onclick = e => { e.preventDefault(); const o = world.creatures.find(z => z.id === +a.dataset.sel); if (o) select(o); });
 }
-
-// ---------- berättaren (valfri, via Claude) ----------
-let catchFrom = 0, lastStory = '';
-const apiKey = () => { try { return localStorage.getItem('thewindow-apikey') || ''; } catch (e) { return ''; } };
-const apiModel = () => { try { return localStorage.getItem('thewindow-model') || 'claude-haiku-5-5'; } catch (e) { return 'claude-haiku-5-5'; } };
-$('#apiKey').value = apiKey(); $('#apiModel').value = apiModel();
-$('#apiStatus').textContent = apiKey() ? 'En nyckel är sparad på den här telefonen.' : 'Ingen nyckel sparad.';
-$('#apiSave').onclick = () => { try { localStorage.setItem('thewindow-apikey', $('#apiKey').value.trim()); localStorage.setItem('thewindow-model', $('#apiModel').value); } catch (e) { } $('#apiStatus').textContent = apiKey() ? 'Sparad. Nyckeln stannar på den här telefonen och skickas bara till Anthropic.' : 'Nyckeln är borttagen.'; };
-function storyData(since) {
-  const al = world.creatures.filter(c => c.alive), F = world.founders;
-  const deaths = {}; for (const [k, v] of Object.entries(world.causes)) if (!k.includes('|')) deaths[CAUSE_SV[k] || k] = v;
-  const words = Object.entries(world.lex).sort((a, b) => b[1].n - a[1].n).slice(0, 8).map(([w, e]) => { const m = world.meaning(w); return `"${w}" (${e.n} gånger, ${e.sp.length} talare${m ? ', sägs troligen ' + m.label : ''})`; });
-  const ev = world.log.filter(l => l.t >= since).slice(-40).map(l => `${fmtT(l.t)}: ${l.msg}`);
-  const H = world.hist.filter(h => h.t >= since);
-  const trend = H.length ? `befolkning från ${H[0].pop} till ${H[H.length - 1].pop}, som mest ${Math.max(...H.map(h => h.pop))}` : '';
-  const avg = f => al.length ? Math.round(al.reduce((a, c) => a + f(c), 0) / al.length * 100) / 100 : null;
-  return [
-    `Nu: ${fmtT(world.time)}, ${world.season().toLowerCase()}, ${Math.round(world.temp)} grader${world.weather.rain > 0 ? ', ' + (world.temp < 0 ? 'snö' : 'regn') : ''}.`,
-    `Lever: ${al.length} varelser. Senaste generationen: ${world.maxGen}. Födda totalt: ${world.births}. Döda totalt per orsak: ${JSON.stringify(deaths)}.`,
-    F ? `Stamföräldrar: ${F.map(f => f.name).join(' och ')}.` : '',
-    world.species.filter(s => s.n >= 3).length ? `Arter: ${world.species.filter(s => s.n >= 3).map(s => `${s.name} (${s.n})`).join(', ')}.` : '',
-    al.length ? `Genomsnitt idag: hjärna ${avg(c => c.br.H)} neuroner, köttätargen ${avg(c => c.g.carn || 0)} (över 0,25 = kan jaga), tålighet mot gift ${avg(c => c.g.tol || 0)}.` : '',
-    al.length ? `Några som lever: ${al.sort((a, b) => b.age - a.age).slice(0, 6).map(c => `${c.name} (gen ${c.gen}, ${world.fmtAge(c.age)}, ${c.kids} barn, i ${world.zoneName(Math.floor(c.x / TS)).toLowerCase()}${c.say ? ', sa senast "' + c.say.txt + '"' : ''})`).join('; ')}.` : '',
-    trend ? `Under perioden: ${trend}.` : '',
-    words.length ? `Vanligaste ljuden: ${words.join('; ')}.` : '',
-    `Händelser under perioden (krönikan):\n${ev.join('\n') || '(inga särskilda)'}`
-  ].filter(Boolean).join('\n');
-}
-async function narrate(since, target) {
-  const key = apiKey();
-  if (!key) { target.classList.remove('hidden'); target.innerHTML = 'Lägg in en API-nyckel under ☰ → Berättaren först.'; return; }
-  target.classList.remove('hidden'); target.textContent = 'Berättaren tittar in genom fönstret…';
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({
-        model: apiModel(), max_tokens: 700,
-        system: 'Du är berättaren i appen The Window: ett fönster in i en dal där artificiella varelser lever, lär sig och utvecklas helt av sig själva. Ingen styr dem. Berätta på svenska, som en varm och lite poetisk naturfilmsberättare, vad som har hänt. Håll dig under 180 ord och skriv i löpande text utan rubriker eller listor. Använd ENDAST det som står i datan – hitta inte på händelser, namn eller känslor. Du får tolka försiktigt ("det ser ut som", "kanske"). Nämn gärna varelser vid namn. Ljuden de gör är inte svenska ord, så översätt dem inte – nämn dem som ljud.',
-        messages: [{ role: 'user', content: 'Här är vad fönstret har sett:\n\n' + storyData(since) + '\n\nBerätta.' }]
-      })
-    });
-    const j = await res.json();
-    if (!res.ok) throw new Error(j && j.error ? j.error.message : 'HTTP ' + res.status);
-    lastStory = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
-    target.innerHTML = esc(lastStory).replace(/\n+/g, '<br><br>');
-    $('#speakBtn').classList.toggle('hidden', !('speechSynthesis' in window));
-  } catch (e) { target.textContent = 'Berättaren kunde inte nå fram: ' + e.message + '. Kolla nyckeln och internet.'; }
-}
-$('#narrateBtn').onclick = () => narrate(Math.max(0, world.time - 3 * DAY), $('#narration'));
-$('#catchNarrate').onclick = () => narrate(catchFrom, $('#catchStory'));
-$('#speakBtn').onclick = () => {
-  if (!lastStory || !('speechSynthesis' in window)) return;
-  speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(lastStory); u.lang = 'sv-SE'; u.rate = 0.95;
-  const v = speechSynthesis.getVoices().find(v => v.lang && v.lang.startsWith('sv')); if (v) u.voice = v;
-  speechSynthesis.speak(u);
-};
 
 boot();
 requestAnimationFrame(frame);

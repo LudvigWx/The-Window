@@ -6,7 +6,6 @@ Ett fönster in i en levande värld. Två varelser föds i en liten dal och utve
 - **Varelserna** har kroppar som växer fram ur gener och hjärnor (neurala nät med minne) som lär sig av belöning och smärta.
 - **Tiden** går även när appen är stängd, och kan snabbas på upp till 2000×.
 - **Världen** har lågland, slätt och berg med egna klimat, årstider, rinnande vatten, giftiga växter, förråd, arter och rovdjur – allt utan förprogrammerade beteenden.
-- **Berättaren** (valfri) använder Claude via en egen API-nyckel för att berätta vad som hänt. Nyckeln sparas bara på telefonen.
 
 ## Så byggs appen
 Varje push till `main` bygger en APK med GitHub Actions. Den hamnar under **Releases** (lättast att ladda ner på mobilen) och som artefakt i Actions-körningen. Alla byggen signeras med samma nyckel, så en ny version kan installeras ovanpå den gamla utan att världen försvinner.
