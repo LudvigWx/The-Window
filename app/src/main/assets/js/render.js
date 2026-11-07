@@ -144,7 +144,7 @@ class Renderer {
   draw(world, sel, rdt, alpha = 1) {
     this.alpha = alpha;
     const g = this.g, z = this.cam.zoom, dpr = this.dpr;
-    if (!this.terrain || this.terrainVer !== world.terrainVersion) this.buildTerrain(world);
+    if (!this.terrain || this.terrainVer !== world.terrainVersion || this.tWorld !== world) { this.buildTerrain(world); this.tWorld = world; }
     else this.repaint(world);
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.sky(world);
@@ -167,6 +167,7 @@ class Renderer {
         this.snowCover(world, g, tx0, tx1);
       }
       this.plants(world, g, t);
+      this.items(world, g);
       g.restore();
     }
     // varelser (ritas nära kameran, med hänsyn till att dalen går runt)
@@ -235,10 +236,18 @@ class Renderer {
     }
   }
 
+  items(world, g) {
+    for (const it of world.items) {
+      const n = Math.min(6, 1 + Math.floor(it.f / 1.2)), fresh = Math.min(1, it.f / 4);
+      for (let k = 0; k < n; k++) { g.fillStyle = `hsl(${350 - (1 - fresh) * 320},${40 + fresh * 35}%,${35 + fresh * 18}%)`; g.beginPath(); g.arc(it.x + (k % 3 - 1) * 1.6, it.y - 1 - Math.floor(k / 3) * 1.4, 1.1, 0, 6.283); g.fill(); }
+    }
+  }
   snowCover(world, g, tx0, tx1) {
-    if (world.snow < 0.02) return;
-    g.fillStyle = `rgba(245,248,255,${Math.min(0.95, world.snow * 1.4)})`;
-    for (let tx = tx0; tx <= tx1; tx++) { const y = world.surface[tx] * TS; if (world.tiles[(world.surface[tx] - 1) * WW + tx] !== T.AIR) continue; g.fillRect(tx * TS, y - 1, TS, 1 + world.snow * 3 + hash2(tx, 5) * 1.2); }
+    if (world.snow < 0.02 && !world.zoneE) return;
+    const snowAmt = Math.max(world.snow, world.zoneE ? clamp(-(world.temp - 6) / 10, 0, 0.6) : 0);
+    if (snowAmt < 0.02) return;
+    g.fillStyle = `rgba(245,248,255,${Math.min(0.95, snowAmt * 1.4)})`;
+    for (let tx = tx0; tx <= tx1; tx++) { const y = world.surface[tx] * TS; if (world.tiles[(world.surface[tx] - 1) * WW + tx] !== T.AIR || (world.localTemp && world.localTemp(tx) > 1.5)) continue; g.fillRect(tx * TS, y - 1, TS, 1 + snowAmt * 3 + hash2(tx, 5) * 1.2); }
   }
   plants(world, g, t) {
     const z = this.cam.zoom;
@@ -303,9 +312,11 @@ class Renderer {
     const open = c.blink < 0 ? 0.15 : 1;
     g.fillStyle = '#fbfaf5'; g.beginPath(); g.ellipse(ex, ey, G.eye, G.eye * open, 0, 0, 6.283); g.fill();
     if (open > 0.5) { g.fillStyle = '#16121c'; g.beginPath(); g.arc(ex + G.eye * 0.35, ey + (c.vy > 50 ? 0.6 : 0), G.eye * 0.5, 0, 6.283); g.fill(); g.fillStyle = '#fff'; g.beginPath(); g.arc(ex + G.eye * 0.5, ey - G.eye * 0.25, G.eye * 0.16, 0, 6.283); g.fill(); }
-    if (c.carry) { const col = Renderer.COL[c.carry] || [120, 90, 60]; g.fillStyle = `rgb(${col})`; g.fillRect(hx + hr * 0.9, bodyY + G.segH * 0.05, 3.2, 3.2); }
+    if (c.carry === 9) { g.fillStyle = 'hsl(350,75%,52%)'; for (let k = 0; k < 3; k++) { g.beginPath(); g.arc(hx + hr * 0.95 + (k % 2) * 1.4, bodyY + G.segH * 0.15 + k * 0.7, 1.1, 0, 6.283); g.fill(); } }
+    else if (c.carry) { const col = Renderer.COL[c.carry] || [120, 90, 60]; g.fillStyle = `rgb(${col})`; g.fillRect(hx + hr * 0.9, bodyY + G.segH * 0.05, 3.2, 3.2); }
     const mo = c.eating > 0 ? 0.8 + Math.sin(t * 18) * 0.6 : c.say && t - c.say.t < 0.3 ? 1.2 : 0.2;
-    g.fillStyle = col(22); g.beginPath(); g.ellipse(hx + hr * 0.85, bodyY + G.segH * 0.18, 1.2, mo, 0, 0, 6.283); g.fill();
+    g.fillStyle = (G.carn || 0) > 0.25 ? 'hsl(355,55%,28%)' : col(22); g.beginPath(); g.ellipse(hx + hr * 0.85, bodyY + G.segH * 0.18, 1.2, mo, 0, 0, 6.283); g.fill();
+    if ((G.carn || 0) > 0.25) { g.fillStyle = '#f4f1e8'; g.fillRect(hx + hr * 0.8, bodyY + G.segH * 0.18 - 0.2, 0.5, 0.9); g.fillRect(hx + hr * 0.95, bodyY + G.segH * 0.18 - 0.2, 0.5, 0.9); }
     g.restore();
     if (c.eating > 0.9 && Math.random() < 0.3) this.particles.push({ x: c.x + c.face * (c.w / 2 + 3), y: c.y - 4, vx: (Math.random() - 0.5) * 20, vy: -20 - Math.random() * 20, life: 0.6, h: 110, s: 1 });
     if (c.grounded && c.prevAir && Math.abs(c.prevVy || 0) > 80) for (let i = 0; i < 4; i++) this.particles.push({ x: c.x + (Math.random() - 0.5) * c.w, y: c.y - 1, vx: (Math.random() - 0.5) * 30, vy: -10 - Math.random() * 15, life: 0.5, h: 30, s: 1 });

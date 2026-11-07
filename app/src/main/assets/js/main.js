@@ -90,7 +90,9 @@ function catchUp(sec) {
     if (hs.length > 2) { $('#catchSpark').classList.remove('hidden'); spark($('#catchSpark'), hs.map(h => h.pop)); } else $('#catchSpark').classList.add('hidden');
     $('#catchTxt').textContent = cut ? `Du var borta i ${fmtDur(sec)}. Telefonen hann räkna ${fmtDur(done * DT)} av det – resten av tiden vilade dalen.` : `Det har gått ${fmtDur(sec)} i dalen. Nu är det ${fmtT(world.time).toLowerCase()}.`;
     $('#catchSum').innerHTML = story.map(s => `<div><b>${esc(s)}</b></div>`).join('') + (ev.length ? ev.slice(-12).map(l => `<div>${esc(l.msg)}</div>`).join('') : '<div>Inget särskilt hände. De har levt sina liv.</div>');
-    $('#catchOk').classList.remove('hidden');
+    $('#catchOk').classList.remove('hidden'); $('#catchStory').classList.add('hidden');
+    $('#catchNarrate').classList.toggle('hidden', !apiKey());
+    catchFrom = world.time - done * DT;
   };
   setTimeout(tick, 30);
 }
@@ -209,7 +211,7 @@ function closePanels() { ['#chron', '#menu', '#people', '#lex', '#histP'].forEac
 function renderPeople() {
   const al = world.creatures.filter(c => c.alive).sort((a, b) => b.gen - a.gen || a.age - b.age);
   $('#peopleTitle').textContent = `Alla som lever (${al.length}) · generation ${world.maxGen}`;
-  $('#peopleList').innerHTML = al.map(c => `<div class="prow" data-id="${c.id}"><span class="dot" style="background:hsl(${c.g.hue},55%,55%)"></span><div><b>${esc(c.name)}</b>${c.size < 1 ? ' · ung' : ''}<div class="meta">Generation ${c.gen} · ${world.fmtAge(c.age)} · ${c.kids} barn${c.pnames ? ' · barn till ' + esc(c.pnames.join(' och ')) : ''}</div></div></div>`).join('') +
+  $('#peopleList').innerHTML = al.map(c => `<div class="prow" data-id="${c.id}"><span class="dot" style="background:hsl(${c.g.hue},55%,55%)"></span><div><b>${esc(c.name)}</b>${c.size < 1 ? ' · ung' : ''}<div class="meta">${c.sp && world.species.length > 1 && world.species.find(s => s.id === c.sp) ? esc(world.species.find(s => s.id === c.sp).name) + ' · ' : ''}Generation ${c.gen} · ${world.fmtAge(c.age)} · ${c.kids} barn${c.pnames ? ' · barn till ' + esc(c.pnames.join(' och ')) : ''}</div></div></div>`).join('') +
     `<p class="meta" style="color:var(--dim);font-size:12px;margin-top:12px">${world.births} har fötts i dalen. ${world.dead.length + world.creatures.filter(c => !c.alive).length} har dött.</p>`;
   document.querySelectorAll('#peopleList .prow').forEach(r => r.onclick = () => { const c = world.creatures.find(z => z.id === +r.dataset.id); if (c) { closePanels(); select(c); } });
 }
@@ -236,6 +238,7 @@ function updCard() {
   $('#cInfo').innerHTML = `Gör just nu: <b>${doing(c)}</b>${feel.length ? ` · Känner sig <b>${feel.join(', ')}</b>` : ''}<br>Ser: <b>${esc(seeing(c))}</b><br>Ålder: <b>${world.fmtAge(c.age)}</b> · Måltider: <b>${c.meals}</b><br>` +
     `Barn: <b>${c.kids}</b>${c.pnames ? ` · Föräldrar: <b>${esc(c.pnames.join(' och '))}</b>` : ''}${c.age < ADULT ? ' · <b>för ung för att få barn</b>' : ''}<br>` +
     [c.say ? `Senast sa: <b>"${esc(c.say.txt)}"</b>` : 'Har aldrig låtit', c.carry ? `Bär: <b>${MAT[c.carry]}</b>` : '', c.builds ? `Har byggt ${c.builds} gånger` : ''].filter(Boolean).join(' · ') + '<br>' +
+    `Plats: ${world.zoneName(Math.floor(c.x / TS))} · Kost: ${(G.carn || 0) > 0.6 ? 'köttätare' : (G.carn || 0) > 0.25 ? 'allätare (kan jaga)' : 'växtätare'}${c.sp && world.species.find(s => s.id === c.sp) ? ` · Art: <b>${esc(world.species.find(s => s.id === c.sp).name)}</b>` : ''}<br>` +
     `Kropp: ${G.seg} segment, ${G.legs} benpar${G.tail ? ', svans' : ''}${G.ant ? ', antenner' : ''}<br>Hjärna: ${c.br.H} neuroner, lär sig av belöning och smärta`;
   if (showBrain) drawBrain(c);
   if (showKin && kinTick++ % 8 === 0) renderKin(c);
@@ -316,7 +319,7 @@ function playVoices() {
 try { if (localStorage.getItem('thewindow-sound') === '1') setSound(true); } catch (e) { }
 
 // ---------- historia: grafer ----------
-const CAUSE_SV = { hunger: 'hunger', thirst: 'törst', cold: 'kyla', age: 'ålder', poison: 'gift', other: 'okänt' };
+const CAUSE_SV = { hunger: 'hunger', thirst: 'törst', cold: 'kyla', age: 'ålder', poison: 'gift', eaten: 'rovdjur', other: 'okänt' };
 let histTab = 'pop', kinTick = 0;
 document.querySelectorAll('#histTabs button').forEach(b => b.onclick = () => { histTab = b.dataset.t; document.querySelectorAll('#histTabs button').forEach(x => x.classList.toggle('on', x === b)); renderHist(); });
 $('#histClose').onclick = () => $('#histP').classList.add('hidden');
@@ -371,6 +374,8 @@ function renderHist() {
     add('Hjärnans storlek (neuroner)', 'c1', [{ n: 'neuroner', c: '#c9a0ff', f: p => p.brain }]);
     add('Kroppens längd och antal benpar', 'c2', [{ n: 'kroppslängd', c: '#f2b76b', f: p => p.body }, { n: 'benpar × 10', c: '#7fd1c9', f: p => p.legs == null ? null : p.legs * 10 }]);
     add('Gift i växterna och tålighet hos varelserna', 'c3', [{ n: 'växternas gift', c: '#b07cff', f: p => p.tox }, { n: 'varelsernas tålighet', c: '#7fd1a0', f: p => p.tol }], { min: 0 });
+    add('Kost: växtätare (0) eller köttätare (1)', 'c5', [{ n: 'köttätargen', c: '#f2788c', f: p => p.carn ?? null }], { min: 0 }, 'Över 0,25 har de tänder nog att jaga levande byten.');
+    add('Antal arter och matförråd på marken', 'c6', [{ n: 'arter', c: '#c9a0ff', f: p => p.species ?? null }, { n: 'förråd / 10', c: '#f2b76b', f: p => p.items == null ? null : p.items / 10 }], { min: 0 });
     add('Hur mycket de pratar och gräver (per 6 timmar)', 'c4', [{ n: 'yttranden / 10', c: '#f2d36b', f: p => p.utt / 10 }, { n: 'grävda rutor', c: '#c98b5b', f: p => p.digs }]);
   } else if (histTab === 'death') {
     const tot = Object.entries(world.causes).filter(([k]) => !k.includes('|'));
@@ -378,13 +383,13 @@ function renderHist() {
     html += `<p>${sum === 1 && !tot.length ? 'Ingen har dött än.' : `Så här har de ${sum} döda dött:`}</p><div class="bars">` + tot.sort((a, b) => b[1] - a[1]).map(([k, v]) => `<div><span>${CAUSE_SV[k] || k}</span><b style="width:${Math.max(4, v / sum * 60)}%"></b><em>${v} (${Math.round(v / sum * 100)} %)</em></div>`).join('') + '</div>';
     const seasons = ['Vår', 'Sommar', 'Höst', 'Vinter'], causes = tot.map(([k]) => k);
     if (causes.length) html += `<div class="ctitle" style="margin-top:14px">Per årstid</div><table class="cmp"><tr><th></th>${seasons.map(s => `<th>${s}</th>`).join('')}</tr>` + causes.map(k => `<tr><td>${CAUSE_SV[k] || k}</td>${seasons.map(s => `<td>${world.causes[k + '|' + s] || 0}</td>`).join('')}</tr>`).join('') + '</table>';
-    add('Dödsfall per 6 timmar, efter orsak', 'c1', ['hunger', 'thirst', 'cold', 'age', 'poison'].map((k, i) => ({ n: CAUSE_SV[k], c: ['#f2b76b', '#6fa8ff', '#a8d8ff', '#9a96b0', '#b07cff'][i], f: p => (p.deaths || {})[k] || 0 })));
+    add('Dödsfall per 6 timmar, efter orsak', 'c1', ['hunger', 'thirst', 'cold', 'age', 'poison', 'eaten'].map((k, i) => ({ n: CAUSE_SV[k], c: ['#f2b76b', '#6fa8ff', '#a8d8ff', '#9a96b0', '#b07cff', '#f2788c'][i], f: p => (p.deaths || {})[k] || 0 })));
   } else if (histTab === 'then') {
     const F = world.founders, al = world.creatures.filter(c => c.alive);
     if (!F) html += '<p>Stamföräldrarnas gener sparades inte i den här dalen (den startades i en äldre version). Starta en ny värld för att kunna jämföra.</p>';
     else if (!al.length) html += '<p>Ingen lever just nu att jämföra med.</p>';
     else {
-      const rows = [['Kroppssegment', g => g.seg], ['Segmentlängd', g => g.segL], ['Benpar', g => g.legs], ['Benlängd', g => g.legL], ['Ögonstorlek', g => g.eye], ['Svans (andel med)', g => g.tail > 0 ? 1 : 0, true], ['Antenner (andel med)', g => g.ant > 0 ? 1 : 0, true], ['Neuroner i hjärnan', (g, c) => c ? c.br.H : g.hid], ['Tålighet mot gift', g => g.tol || 0], ['Nyfikenhet (brus)', g => g.explore], ['Inlärningstakt × 1000', g => g.lr * 1000], ['Livslängd (dygn)', g => g.maxAge / DAY]];
+      const rows = [['Kroppssegment', g => g.seg], ['Segmentlängd', g => g.segL], ['Benpar', g => g.legs], ['Benlängd', g => g.legL], ['Ögonstorlek', g => g.eye], ['Svans (andel med)', g => g.tail > 0 ? 1 : 0, true], ['Antenner (andel med)', g => g.ant > 0 ? 1 : 0, true], ['Neuroner i hjärnan', (g, c) => c ? c.br.H : g.hid], ['Tålighet mot gift', g => g.tol || 0], ['Nyfikenhet (brus)', g => g.explore], ['Inlärningstakt × 1000', g => g.lr * 1000], ['Livslängd (dygn)', g => g.maxAge / DAY], ['Köttätargen', g => g.carn || 0]];
       const fmt = (v, pct) => pct ? Math.round(v * 100) + ' %' : (Math.abs(v) >= 10 ? Math.round(v) : Math.round(v * 100) / 100);
       html += `<p>Stamföräldrarna ${F.map(f => esc(f.name)).join(' och ')} jämfört med genomsnittet av de ${al.length} som lever nu (generation ${world.maxGen}).</p><table class="cmp"><tr><th></th><th>Då</th><th>Nu</th></tr>` +
         rows.map(([n, f, pct]) => { const then = F.reduce((a, x) => a + f(x.g, null), 0) / F.length, now = al.reduce((a, c) => a + f(c.g, c), 0) / al.length; const ch = then ? (now - then) / Math.abs(then) : now; const mark = Math.abs(ch) > 0.15 ? (ch > 0 ? ' ▲' : ' ▼') : ''; return `<tr><td>${n}</td><td>${fmt(then, pct)}</td><td>${fmt(now, pct)}${mark}</td></tr>`; }).join('') + '</table><p style="color:var(--dim);font-size:12px">▲▼ = förändrats mer än 15 %.</p>';
@@ -420,6 +425,63 @@ function renderKin(c) {
   $('#kin').innerHTML = lines.map(l => `<div>${l}</div>`).join('');
   document.querySelectorAll('#kin a[data-sel]').forEach(a => a.onclick = e => { e.preventDefault(); const o = world.creatures.find(z => z.id === +a.dataset.sel); if (o) select(o); });
 }
+
+// ---------- berättaren (valfri, via Claude) ----------
+let catchFrom = 0, lastStory = '';
+const apiKey = () => { try { return localStorage.getItem('thewindow-apikey') || ''; } catch (e) { return ''; } };
+const apiModel = () => { try { return localStorage.getItem('thewindow-model') || 'claude-haiku-5-5'; } catch (e) { return 'claude-haiku-5-5'; } };
+$('#apiKey').value = apiKey(); $('#apiModel').value = apiModel();
+$('#apiStatus').textContent = apiKey() ? 'En nyckel är sparad på den här telefonen.' : 'Ingen nyckel sparad.';
+$('#apiSave').onclick = () => { try { localStorage.setItem('thewindow-apikey', $('#apiKey').value.trim()); localStorage.setItem('thewindow-model', $('#apiModel').value); } catch (e) { } $('#apiStatus').textContent = apiKey() ? 'Sparad. Nyckeln stannar på den här telefonen och skickas bara till Anthropic.' : 'Nyckeln är borttagen.'; };
+function storyData(since) {
+  const al = world.creatures.filter(c => c.alive), F = world.founders;
+  const deaths = {}; for (const [k, v] of Object.entries(world.causes)) if (!k.includes('|')) deaths[CAUSE_SV[k] || k] = v;
+  const words = Object.entries(world.lex).sort((a, b) => b[1].n - a[1].n).slice(0, 8).map(([w, e]) => { const m = world.meaning(w); return `"${w}" (${e.n} gånger, ${e.sp.length} talare${m ? ', sägs troligen ' + m.label : ''})`; });
+  const ev = world.log.filter(l => l.t >= since).slice(-40).map(l => `${fmtT(l.t)}: ${l.msg}`);
+  const H = world.hist.filter(h => h.t >= since);
+  const trend = H.length ? `befolkning från ${H[0].pop} till ${H[H.length - 1].pop}, som mest ${Math.max(...H.map(h => h.pop))}` : '';
+  const avg = f => al.length ? Math.round(al.reduce((a, c) => a + f(c), 0) / al.length * 100) / 100 : null;
+  return [
+    `Nu: ${fmtT(world.time)}, ${world.season().toLowerCase()}, ${Math.round(world.temp)} grader${world.weather.rain > 0 ? ', ' + (world.temp < 0 ? 'snö' : 'regn') : ''}.`,
+    `Lever: ${al.length} varelser. Senaste generationen: ${world.maxGen}. Födda totalt: ${world.births}. Döda totalt per orsak: ${JSON.stringify(deaths)}.`,
+    F ? `Stamföräldrar: ${F.map(f => f.name).join(' och ')}.` : '',
+    world.species.filter(s => s.n >= 3).length ? `Arter: ${world.species.filter(s => s.n >= 3).map(s => `${s.name} (${s.n})`).join(', ')}.` : '',
+    al.length ? `Genomsnitt idag: hjärna ${avg(c => c.br.H)} neuroner, köttätargen ${avg(c => c.g.carn || 0)} (över 0,25 = kan jaga), tålighet mot gift ${avg(c => c.g.tol || 0)}.` : '',
+    al.length ? `Några som lever: ${al.sort((a, b) => b.age - a.age).slice(0, 6).map(c => `${c.name} (gen ${c.gen}, ${world.fmtAge(c.age)}, ${c.kids} barn, i ${world.zoneName(Math.floor(c.x / TS)).toLowerCase()}${c.say ? ', sa senast "' + c.say.txt + '"' : ''})`).join('; ')}.` : '',
+    trend ? `Under perioden: ${trend}.` : '',
+    words.length ? `Vanligaste ljuden: ${words.join('; ')}.` : '',
+    `Händelser under perioden (krönikan):\n${ev.join('\n') || '(inga särskilda)'}`
+  ].filter(Boolean).join('\n');
+}
+async function narrate(since, target) {
+  const key = apiKey();
+  if (!key) { target.classList.remove('hidden'); target.innerHTML = 'Lägg in en API-nyckel under ☰ → Berättaren först.'; return; }
+  target.classList.remove('hidden'); target.textContent = 'Berättaren tittar in genom fönstret…';
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({
+        model: apiModel(), max_tokens: 700,
+        system: 'Du är berättaren i appen The Window: ett fönster in i en dal där artificiella varelser lever, lär sig och utvecklas helt av sig själva. Ingen styr dem. Berätta på svenska, som en varm och lite poetisk naturfilmsberättare, vad som har hänt. Håll dig under 180 ord och skriv i löpande text utan rubriker eller listor. Använd ENDAST det som står i datan – hitta inte på händelser, namn eller känslor. Du får tolka försiktigt ("det ser ut som", "kanske"). Nämn gärna varelser vid namn. Ljuden de gör är inte svenska ord, så översätt dem inte – nämn dem som ljud.',
+        messages: [{ role: 'user', content: 'Här är vad fönstret har sett:\n\n' + storyData(since) + '\n\nBerätta.' }]
+      })
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j && j.error ? j.error.message : 'HTTP ' + res.status);
+    lastStory = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    target.innerHTML = esc(lastStory).replace(/\n+/g, '<br><br>');
+    $('#speakBtn').classList.toggle('hidden', !('speechSynthesis' in window));
+  } catch (e) { target.textContent = 'Berättaren kunde inte nå fram: ' + e.message + '. Kolla nyckeln och internet.'; }
+}
+$('#narrateBtn').onclick = () => narrate(Math.max(0, world.time - 3 * DAY), $('#narration'));
+$('#catchNarrate').onclick = () => narrate(catchFrom, $('#catchStory'));
+$('#speakBtn').onclick = () => {
+  if (!lastStory || !('speechSynthesis' in window)) return;
+  speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(lastStory); u.lang = 'sv-SE'; u.rate = 0.95;
+  const v = speechSynthesis.getVoices().find(v => v.lang && v.lang.startsWith('sv')); if (v) u.voice = v;
+  speechSynthesis.speak(u);
+};
 
 boot();
 requestAnimationFrame(frame);
