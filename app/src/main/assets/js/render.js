@@ -170,6 +170,8 @@ class Renderer {
       this.items(world, g);
       g.restore();
     }
+    // djuren
+    if (world.beasts) { const ba = clamp((world.bAcc || 0) / 0.1, 0, 1); for (const b of world.beasts) { const ix = (b.px ?? b.x) + wrapD(b.x - (b.px ?? b.x)) * ba, x = this.cam.x + wrapD(ix - this.cam.x); if (Math.abs(x - this.cam.x) > this.W / this.cam.zoom) continue; this.beast(b, x, b.y, g, t); } }
     // varelser (ritas nära kameran, med hänsyn till att dalen går runt)
     for (const c of world.creatures) {
       const [ix, iy] = this.ipos(c), x = this.cam.x + wrapD(ix - this.cam.x);
@@ -239,6 +241,7 @@ class Renderer {
   items(world, g) {
     for (const it of world.items) {
       const n = Math.min(6, 1 + Math.floor(it.f / 1.2)), fresh = Math.min(1, it.f / 4);
+      if (it.seed) { g.fillStyle = `hsl(${it.seed.berry},${40 + fresh * 35}%,${30 + fresh * 22}%)`; g.beginPath(); g.arc(it.x, it.y - 1.6, 1.8, 0, 6.283); g.fill(); continue; }
       for (let k = 0; k < n; k++) { g.fillStyle = `hsl(${350 - (1 - fresh) * 320},${40 + fresh * 35}%,${35 + fresh * 18}%)`; g.beginPath(); g.arc(it.x + (k % 3 - 1) * 1.6, it.y - 1 - Math.floor(k / 3) * 1.4, 1.1, 0, 6.283); g.fill(); }
     }
   }
@@ -258,6 +261,15 @@ class Renderer {
       const autumn = clamp((13 - world.temp) / 13, 0, 1), tox = p.tox || 0;
       let hue = p.hue + (35 - p.hue) * autumn * 0.8; hue = hue + (285 - hue) * Math.min(1, tox * 0.9);
       const sat = 45 - autumn * 15;
+      if (p.h > 2.2) { // träd: stam och krona
+        const cw = 4 + p.h * 3.2, cy = by - h + cw * 0.5;
+        g.strokeStyle = `hsl(28,30%,${20 + p.h}%)`; g.lineWidth = 1.2 + p.h * 0.55; g.beginPath(); g.moveTo(bx, by); g.quadraticCurveTo(bx + sway * 0.2, by - h * 0.5, bx + sway * 0.5, cy); g.stroke();
+        const lf = Math.max(0.35, Math.min(1, ripe)), n2 = 5 + Math.floor(p.h);
+        for (let i = 0; i < n2; i++) { const a = i / n2 * 6.283 + p.x, rr = cw * (0.35 + 0.35 * hash2(p.x, i)); g.fillStyle = `hsl(${hue + (i % 3) * 5},${sat + 5}%,${24 + (i % 4) * 4 - tox * 8}%)`; g.globalAlpha = 0.6 + 0.4 * lf; g.beginPath(); g.arc(bx + sway * 0.6 + Math.cos(a) * rr, cy + Math.sin(a) * rr * 0.6, cw * 0.42 * lf + 1, 0, 6.283); g.fill(); }
+        g.globalAlpha = 1;
+        if ((p.fruit || 0) > 0.4) { g.fillStyle = tox > 0.3 ? 'hsl(280,70%,50%)' : `hsl(${p.berry},75%,55%)`; for (let i = 0; i < Math.min(8, Math.ceil(p.fruit * 2)); i++) { g.beginPath(); g.arc(bx + sway * 0.6 + Math.sin(i * 2.4 + p.x) * cw * 0.6, cy + Math.cos(i * 1.9) * cw * 0.35, 1.5, 0, 6.283); g.fill(); } }
+        continue;
+      }
       g.strokeStyle = `hsl(${hue},${sat}%,${26 + ripe * 8}%)`; g.lineWidth = 1 + p.h * 0.4;
       g.beginPath(); g.moveTo(bx, by); g.quadraticCurveTo(bx + sway * 0.3, by - h * 0.6, bx + sway, by - h); g.stroke();
       const n = Math.min(8, 2 + Math.floor(p.b / 3));
@@ -322,6 +334,24 @@ class Renderer {
     if (c.eating > 0.9 && Math.random() < 0.3) this.particles.push({ x: c.x + c.face * (c.w / 2 + 3), y: c.y - 4, vx: (Math.random() - 0.5) * 20, vy: -20 - Math.random() * 20, life: 0.6, h: 110, s: 1 });
     if (c.grounded && c.prevAir && Math.abs(c.prevVy || 0) > 80) for (let i = 0; i < 4; i++) this.particles.push({ x: c.x + (Math.random() - 0.5) * c.w, y: c.y - 1, vx: (Math.random() - 0.5) * 30, vy: -10 - Math.random() * 15, life: 0.5, h: 30, s: 1 });
     c.prevAir = !c.grounded; c.prevVy = c.vy;
+  }
+  beast(b, x, y, g, t) {
+    const G = b.g, sz = G.size, f = b.face, big = b.kind === 'big';
+    g.save(); g.translate(x, y);
+    if (!b.alive) { const left = Math.min(1, b.flesh / (22 * Math.pow(sz, 1.6))); g.globalAlpha = 0.35 + 0.4 * left; g.fillStyle = `hsl(${G.hue},15%,${28 + 8 * left}%)`; g.beginPath(); g.ellipse(0, -1.5 * sz * left - 0.5, 4.5 * sz, 1.8 * sz * left + 0.5, 0, 0, 6.283); g.fill(); g.restore(); return; }
+    const body = `hsl(${G.hue},${big ? 30 : 45}%,${big ? 24 : 42}%)`, dark = `hsl(${G.hue},${big ? 25 : 35}%,${big ? 15 : 28}%)`;
+    const legH = 3.2 * sz, bw = 4.5 * sz, bh = 2.4 * sz, by = -legH - bh * 0.6, ph = b.walk;
+    g.strokeStyle = dark; g.lineWidth = Math.max(0.8, 0.7 * sz);
+    for (const [lx, o] of [[-bw * 0.6, 0], [-bw * 0.4, Math.PI], [bw * 0.45, Math.PI], [bw * 0.65, 0]]) { const sw = b.vx ? Math.sin(ph + o) * 1.4 * sz : 0; g.beginPath(); g.moveTo(lx, by + bh * 0.5); g.lineTo(lx + sw, 0); g.stroke(); }
+    g.fillStyle = body; g.beginPath(); g.ellipse(0, by, bw, bh, 0, 0, 6.283); g.fill();
+    const hx = f * (bw + 1.2 * sz), hy = by - bh * 0.5;
+    g.beginPath(); g.ellipse(hx, hy, 1.9 * sz, 1.4 * sz, f * 0.3, 0, 6.283); g.fill();
+    if (G.horn) { g.strokeStyle = '#e8e0cc'; g.lineWidth = Math.max(0.7, 0.4 * sz); g.beginPath(); g.moveTo(hx - f * 0.5 * sz, hy - sz); g.quadraticCurveTo(hx + f * 0.8 * sz, hy - 3 * sz, hx + f * 2 * sz, hy - 2.4 * sz); g.stroke(); }
+    else { g.fillStyle = dark; g.beginPath(); g.ellipse(hx - f * 0.6 * sz, hy - 1.4 * sz, 0.5 * sz, 1.1 * sz, -f * 0.3, 0, 6.283); g.fill(); }
+    g.fillStyle = '#111'; g.beginPath(); g.arc(hx + f * 0.7 * sz, hy - 0.3 * sz, Math.max(0.5, 0.35 * sz), 0, 6.283); g.fill();
+    g.strokeStyle = dark; g.lineWidth = Math.max(0.6, 0.4 * sz); g.beginPath(); g.moveTo(-f * bw, by - bh * 0.2); g.lineTo(-f * (bw + 1.5 * sz), by + bh * 0.4 + Math.sin(t * 4 + b.id) * 0.5); g.stroke();
+    if (b.flee > 0) { g.fillStyle = 'rgba(255,255,255,0.6)'; g.fillRect(-f * (bw + 2 * sz), -1, 1, 1); }
+    g.restore();
   }
   corpse(c, x, y, g) {
     const left = Math.max(0.15, Math.min(1, c.flesh / (25 * c.size)));

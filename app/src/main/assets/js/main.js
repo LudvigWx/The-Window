@@ -317,7 +317,7 @@ function playVoices() {
 try { if (localStorage.getItem('thewindow-sound') === '1') setSound(true); } catch (e) { }
 
 // ---------- historia: grafer ----------
-const CAUSE_SV = { hunger: 'hunger', thirst: 'törst', cold: 'kyla', age: 'ålder', poison: 'gift', disease: 'sjukdom', eaten: 'rovdjur', other: 'okänt' };
+const CAUSE_SV = { hunger: 'hunger', thirst: 'törst', cold: 'kyla', age: 'ålder', poison: 'gift', disease: 'sjukdom', kicked: 'uroxe', eaten: 'rovdjur', other: 'okänt' };
 let histTab = 'pop', kinTick = 0;
 document.querySelectorAll('#histTabs button').forEach(b => b.onclick = () => { histTab = b.dataset.t; document.querySelectorAll('#histTabs button').forEach(x => x.classList.toggle('on', x === b)); renderHist(); });
 $('#histClose').onclick = () => $('#histP').classList.add('hidden');
@@ -362,9 +362,11 @@ function renderHist() {
     const peak = H.reduce((a, h) => Math.max(a, h.pop), 0);
     html += `<p>${world.births} har fötts och ${world.dead.length + world.creatures.filter(c => !c.alive).length} har dött sedan stamföräldrarna. Som flest har ${peak} levt samtidigt. Generation ${world.maxGen} är den senaste.</p>`;
     add('Hur många som lever', 'c1', [{ n: 'lever', c: '#f2b76b', f: p => p.pop, w: 2.2 }, { n: 'varav unga', c: '#7fd1c9', f: p => p.young }], {}, 'Blå band = vinter.');
+    add('Djuren i dalen', 'c3', [{ n: 'betare', c: '#e0b070', f: p => p.small ?? null }, { n: 'uroxar', c: '#a0705a', f: p => p.big ?? null }], { min: 0 }, 'Betarna och uroxarna evolverar på egen hand. Uroxar är för stora att fälla ensam utan att få en spark.');
     add('Födslar och dödsfall (per 6 timmar)', 'c2', [{ n: 'födda', c: '#7fd1a0', f: p => p.births }, { n: 'döda', c: '#f2788c', f: sumD }]);
   } else if (histTab === 'env') {
     add('Mat i dalen (växternas samlade massa)', 'c1', [{ n: 'mat', c: '#7fd1a0', f: p => p.food, w: 2.2 }], {}, 'Om maten rasar när befolkningen växer har de ätit ur dalen.');
+    add('Växterna: höjd, antal träd och frukt', 'c5', [{ n: 'höjd × 10', c: '#7fd1a0', f: p => p.treeH == null ? null : p.treeH * 10 }, { n: 'träd', c: '#c98b5b', f: p => p.trees ?? null }, { n: 'frukt × 100', c: '#f2788c', f: p => p.fr == null ? null : p.fr * 100 }], { min: 0 }, 'Växter som blir högre än grannarna skuggar dem. Höga växter blir träd, och frukten som faller sprider frön.');
     add('Vatten ovan jord (rutor)', 'c2', [{ n: 'vatten', c: '#6fa8ff', f: p => p.water }]);
     add('Klimatet: hur mycket varmare/kallare och blötare än vanligt', 'c4', [{ n: '°C jämfört med vanligt', c: '#f2788c', f: p => p.climT ?? null }, { n: 'regn × 10 (10 = vanligt)', c: '#6fa8ff', f: p => p.climW == null ? null : p.climW * 10 }], {}, 'Klimatet driver långsamt mellan istider, torka och blöta perioder.');
     add('Temperatur', 'c3', [{ n: '°C', c: '#f2b76b', f: p => p.temp }], { min: Math.min(-5, ...H.map(h => h.temp)) });
