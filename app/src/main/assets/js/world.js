@@ -305,9 +305,11 @@ class World {
     // invandring: om en sort saknas vandrar en liten flock in efter ett tag
     for (const kind of ['small', 'big']) {
       if (nS[kind] === 0 && this.time > this.imm[kind]) {
-        const x = r.next() * WPX, n = kind === 'big' ? 3 + r.int(2) : 5 + r.int(4);
+        const al = this.creatures.filter(c => c.alive); let x = r.next() * WPX, bestD = -1;
+        for (let k = 0; k < 16; k++) { const cx = r.next() * WPX, col = wrapT(Math.floor(cx / TS)); if (this.tiles[(this.surface[col] - 1) * WW + col] === T.WATER) continue; const d = al.reduce((m, c) => Math.min(m, Math.abs(wrapD(c.x - cx))), 1e9); if (d > bestD) { bestD = d; x = cx; } }
+        const n = kind === 'big' ? 3 + r.int(2) : 5 + r.int(4);
         for (let i = 0; i < n; i++) this.spawnBeast(kind, wrapX(x + i * 14));
-        this.imm[kind] = this.time + r.range(20, 45) * DAY;
+        this.imm[kind] = this.time + r.range(6, 15) * DAY;
         this.chron(kind === 'big' ? `En hjord med ${n} uroxar vandrar in i dalen. De är stora, starka och sparkar den som biter dem.` : `En flock med ${n} betare vandrar in i dalen. De äter växter och är snabba och skygga.`);
       }
     }
@@ -320,8 +322,8 @@ class World {
       let threat = null, td = g.wary;
       for (let k = -Math.ceil(g.wary / TS); k <= Math.ceil(g.wary / TS); k += 1) for (const o of this.bins[wrapT(col + k)]) { if ((o.g.carn || 0) < 0.25) continue; const d = Math.abs(wrapD(o.x - b.x)); if (d < td && Math.abs(o.y - b.y) < 40) { td = d; threat = o; } }
       if (threat || b.flee > 0) {
-        if (threat) b.face = wrapD(threat.x - b.x) > 0 ? -1 : 1;
-        b.flee = Math.max(0, b.flee - dt); b.vx = b.face * g.spd;
+        if (threat) { b.face = wrapD(threat.x - b.x) > 0 ? -1 : 1; if (b.flee <= 0) { b.flee = 2.5; for (let k = -12; k <= 12; k++) for (const o of this.bbins[wrapT(col + k)]) if (o !== b && o.alive && o.kind === b.kind && o.flee <= 0) { o.flee = 2.5; o.face = b.face; } } } // flocken varnar varandra
+        b.flee = Math.max(0, b.flee - dt); b.vx = b.face * g.spd * (b.flee > 1 ? 1.5 : 1.15);
       } else {
         // beta: stå still vid mat, annars vandra mot mat i närheten
         const p = this.plantAt[col], reach = 8 + 14 * g.size;
@@ -638,7 +640,7 @@ class World {
   body(c) {
     const g = c.g, dt = DT;
     let reward = 0;
-    const move = c.out[0], maxV = 14 + g.legL * 2.2 + g.legs * 3;
+    const move = c.out[0], maxV = 14 + 36 * (1 - Math.exp(-g.legL / 12)) + 20 * (1 - Math.exp(-g.legs / 4)); // fler och längre ben ger allt mindre extra fart
     const inWater = this.waterAt(c.x, c.y - c.h * 0.5);
     const target = Math.abs(move) > 0.15 ? move * maxV * (inWater ? 0.5 : 1) : 0;
     if (Math.abs(move) > 0.15) c.face = move > 0 ? 1 : -1;
@@ -801,7 +803,7 @@ class World {
       }
     }
     // ämnesomsättning: allt kostar
-    const metab = 0.02 + 0.0015 * c.w + 0.0004 * c.br.H + Math.abs(c.vx) * 0.0006 + (c.size < 1 ? 0.02 : 0) + (c.carry ? 0.01 : 0) + c.cold * 0.0025 + (c.g.tol || 0) * 0.01 + c.g.legs * 0.0008;
+    const metab = 0.02 + 0.0015 * c.w + 0.0004 * c.br.H + Math.abs(c.vx) * 0.0006 * (1 + g.legL / 25) + (c.size < 1 ? 0.02 : 0) + (c.carry ? 0.01 : 0) + c.cold * 0.0025 + (c.g.tol || 0) * 0.01 + c.g.legs * 0.0008;
     c.energy -= metab * dt;
     c.pain *= 1 - dt * 0.8;
     c.walk += Math.abs(c.vx) * dt * 0.28;
@@ -1065,7 +1067,7 @@ class World {
     if (d.fert) w.fert = Float32Array.from(d.fert); w.dead = d.dead || []; w.maxGen = d.maxGen || 1; w.births = d.births || 0; w.popHist = d.popHist || [];
     w.lex = d.lex || {}; w.ctxTot = d.ctxTot || {}; w.uttTot = d.uttTot || 0; w.stats = d.stats || { digs: 0, builds: 0, gifts: 0 };
     if (d.moist) w.moist = Float32Array.from(d.moist); if (d.weather) w.weather = d.weather; w.snow = d.snow || 0;
-    w.hist = d.hist || []; w.causes = d.causes || {}; w.items = d.items || []; w.species = d.species || []; w.nextSp = d.nextSp || 1; w.founders = d.founders || null; if (d.beasts) { w.beasts = d.beasts; w.imm = d.imm; w.nextBeastId = d.nextBeastId || 1; } else w.imm = { small: w.time + 1 * DAY, big: w.time + 4 * DAY };
+    w.hist = d.hist || []; w.causes = d.causes || {}; w.items = d.items || []; w.species = d.species || []; w.nextSp = d.nextSp || 1; w.founders = d.founders || null; if (d.beasts) { w.beasts = d.beasts; w.imm = d.imm; for (const k in w.imm) w.imm[k] = Math.min(w.imm[k], w.time + 8 * DAY); w.nextBeastId = d.nextBeastId || 1; } else w.imm = { small: w.time + 1 * DAY, big: w.time + 4 * DAY };
     if (d.clim) w.clim = d.clim; else w.clim.next = w.time + 20 * DAY; if (d.plague) w.plague = d.plague; else w.plague.next = w.time + 6 * DAY; w.histAcc = d.histAcc || 0; if (d.iv) w.iv = d.iv;
     const bin = atob(d.tiles); for (let i = 0; i < bin.length; i++) w.tiles[i] = bin.charCodeAt(i);
     w.surface = Int16Array.from(d.surface);
