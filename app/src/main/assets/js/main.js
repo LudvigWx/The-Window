@@ -13,9 +13,41 @@ let speed = 1, paused = false, busy = true, simAcc = 0, lastT = performance.now(
 const store = {
   load() { try { if (window.Android) return Android.load(); return localStorage.getItem('thewindow') || ''; } catch (e) { return ''; } },
   save(s) { try { if (window.Android) Android.save(s); else localStorage.setItem('thewindow', s); } catch (e) { } },
-  wipe() { try { if (window.Android) Android.wipe(); else localStorage.removeItem('thewindow'); } catch (e) { } }
+  wipe() { try { if (window.Android) Android.wipe(); else localStorage.removeItem('thewindow'); } catch (e) { } },
+  archSave(id, meta, data) { try { if (window.Android && Android.archiveSave) Android.archiveSave(id, JSON.stringify(meta), data); else { localStorage.setItem('arch:' + id, data); localStorage.setItem('archm:' + id, JSON.stringify(meta)); } return true; } catch (e) { return false; } },
+  archList() { try { if (window.Android && Android.archiveList) return JSON.parse(Android.archiveList()); return Object.keys(localStorage).filter(k => k.startsWith('archm:')).map(k => JSON.parse(localStorage.getItem(k))); } catch (e) { return []; } },
+  archLoad(id) { try { if (window.Android && Android.archiveLoad) return Android.archiveLoad(id); return localStorage.getItem('arch:' + id) || ''; } catch (e) { return ''; } }
 };
-function saveWorld() { if (!world || busy) return; const d = world.toJSON(); d.realTime = Date.now(); d.ui = { speedV: +$('#spd').value }; store.save(JSON.stringify(d)); }
+// ---------- dalarkivet ----------
+let liveWorld = null, liveSel = null;
+function archiveWorld(w) {
+  if (!w || w.time < DAY) return false;
+  const al = w.creatures.filter(c => c.alive).length, f = w.founders || [], peak = (w.hist || []).reduce((a, h) => Math.max(a, h.pop), 0);
+  const meta = { id: 'v' + w.seed, name: f.length >= 2 ? `Dalen efter ${f[0].name} och ${f[1].name}` : 'En dal', days: Math.floor(w.time / DAY + 0.25) + 1, gen: w.maxGen, births: w.births, peak, alive: al, saved: Date.now() };
+  const d = w.toJSON(); d.archived = true;
+  return store.archSave(meta.id, meta, JSON.stringify(d));
+}
+function renderArch() {
+  const L = store.archList().sort((a, b) => b.saved - a.saved);
+  $('#archList').innerHTML = L.length ? L.map(m => `<div class="archItem" data-id="${esc(m.id)}"><b>${esc(m.name)}</b><br><small>${m.days} dagar · generation ${m.gen} · ${m.births} födda · som flest ${m.peak} · ${m.alive ? `${m.alive} levde när den sparades` : 'utdöd'} · sparad ${new Date(m.saved).toLocaleDateString('sv-SE')}</small></div>`).join('') : '<p style="color:var(--dim)">Arkivet är tomt än.</p>';
+  for (const el of document.querySelectorAll('.archItem')) el.onclick = () => openArchive(el.dataset.id, el.querySelector('b').textContent);
+}
+function openArchive(id, name) {
+  const raw = store.archLoad(id); if (!raw) return;
+  let w; try { w = World.fromJSON(JSON.parse(raw)); } catch (e) { return; }
+  if (!liveWorld) { liveWorld = world; liveSel = sel; }
+  saveWorld(); world = w; world.onLog = null; paused = true; $('#pauseBtn').textContent = '▶';
+  sel = follow = null; closePanels(); $('#card').classList.add('hidden');
+  const c = w.creatures.find(c => c.alive) || w.creatures[w.creatures.length - 1]; if (c) { ren.cam.x = c.x; ren.cam.y = c.y - 30; }
+  $('#archBannerTxt').textContent = `📚 ${name} – dag ${Math.floor(w.time / DAY + 0.25) + 1}`; $('#archBanner').classList.remove('hidden');
+  buildChips();
+}
+function closeArchive() {
+  if (!liveWorld) return;
+  world = liveWorld; liveWorld = null; sel = follow = liveSel; liveSel = null; world.onLog = pushFeed;
+  $('#archBanner').classList.add('hidden'); closePanels(); $('#card').classList.add('hidden'); buildChips();
+}
+function saveWorld() { const W0 = liveWorld || world; if (!W0 || busy) return; const d = W0.toJSON(); d.realTime = Date.now(); d.ui = { speedV: +$('#spd').value }; store.save(JSON.stringify(d)); }
 
 function fmtT(t) { const d = Math.floor(t / DAY + 0.25) + 1, m = Math.floor((((t / DAY) + 0.25) % 1) * 1440); return `Dag ${d} · ${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }
 function fmtDur(s) { const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : m ? `${m} min` : `${Math.round(s)} s`; }
@@ -96,14 +128,14 @@ function catchUp(sec) {
 }
 $('#catchOk').onclick = () => { $('#overlay').classList.add('hidden'); busy = false; saveWorld(); };
 window.onAppPause = () => { saveWorld(); pausedAt = Date.now(); };
-window.onAppResume = () => { if (pausedAt && !busy) { const s = (Date.now() - pausedAt) / 1000; pausedAt = 0; catchUp(s); } };
+window.onAppResume = () => { if (pausedAt && !busy) { if (liveWorld) closeArchive(); const s = (Date.now() - pausedAt) / 1000; pausedAt = 0; catchUp(s); } };
 document.addEventListener('visibilitychange', () => { if (window.Android) return; if (document.hidden) window.onAppPause(); else window.onAppResume(); });
 setInterval(saveWorld, 20000);
 
 // ---------- tidsreglaget ----------
 function setSpeed() { const v = +$('#spd').value; speed = Math.pow(2000, v / 100); }
 $('#spd').oninput = setSpeed;
-$('#pauseBtn').onclick = () => { paused = !paused; $('#pauseBtn').textContent = paused ? '▶' : '⏸'; };
+$('#pauseBtn').onclick = () => { if (liveWorld) return; paused = !paused; $('#pauseBtn').textContent = paused ? '▶' : '⏸'; };
 
 // ---------- huvudloopen ----------
 function frame(ts) {
@@ -205,7 +237,7 @@ function refreshChipLabels(alive) {
   // stamföräldrarnas knappar: markera de döda med † och ta bort dem som inte längre finns i dalen
   document.querySelectorAll('#chips .chip[data-id]').forEach(ch => { const c = world.creatures.find(z => z.id === +ch.dataset.id); if (!c) ch.remove(); else if (!c.alive && !ch.textContent.includes('†')) ch.innerHTML += ' †'; });
 }
-function closePanels() { ['#chron', '#menu', '#people', '#lex', '#histP'].forEach(s => $(s).classList.add('hidden')); }
+function closePanels() { ['#chron', '#menu', '#people', '#lex', '#histP', '#arch'].forEach(s => $(s).classList.add('hidden')); }
 function renderPeople() {
   const al = world.creatures.filter(c => c.alive).sort((a, b) => b.gen - a.gen || a.age - b.age);
   $('#peopleTitle').textContent = `Alla som lever (${al.length}) · generation ${world.maxGen}`;
@@ -268,10 +300,14 @@ $('#chronBtn').onclick = () => { const was = $('#chron').classList.contains('hid
 $('#chronClose').onclick = () => $('#chron').classList.add('hidden');
 $('#menuBtn').onclick = () => { const was = $('#menu').classList.contains('hidden'); closePanels(); $('#menu').classList.toggle('hidden', !was); $('#confirmNew').classList.add('hidden'); };
 $('#menuClose').onclick = () => $('#menu').classList.add('hidden');
+$('#archBtn').onclick = () => { closePanels(); $('#arch').classList.remove('hidden'); renderArch(); };
+$('#archClose').onclick = () => $('#arch').classList.add('hidden');
+$('#archBack').onclick = closeArchive;
+$('#archSaveNow').onclick = () => { const w = liveWorld || world; const ok = archiveWorld(w); $('#archSaveNow').textContent = ok ? '✅ Sparad i arkivet' : 'Dalen är för ung för arkivet'; renderArch(); setTimeout(() => $('#archSaveNow').textContent = '📥 Spara den här dalen i arkivet nu', 2500); };
 $('#newWorldBtn').onclick = () => $('#confirmNew').classList.remove('hidden');
 $('#extinctNew').onclick = () => { closePanels(); $('#menu').classList.remove('hidden'); $('#confirmNew').classList.remove('hidden'); };
 $('#confirmNo').onclick = () => $('#confirmNew').classList.add('hidden');
-$('#confirmYes').onclick = () => { store.wipe(); world = null; sel = follow = null; $('#menu').classList.add('hidden'); $('#card').classList.add('hidden'); $('#chips').innerHTML = ''; showIntro(); };
+$('#confirmYes').onclick = () => { if (liveWorld) closeArchive(); archiveWorld(world); store.wipe(); world = null; sel = follow = null; $('#menu').classList.add('hidden'); $('#card').classList.add('hidden'); $('#chips').innerHTML = ''; showIntro(); };
 
 // ---------- ordboken ----------
 function renderLex() {

@@ -18,6 +18,9 @@ button{font:inherit;color:inherit;cursor:pointer}
 #top .sp{flex:1}
 .ib{pointer-events:auto;width:40px;height:40px;border-radius:12px;font-size:18px;display:flex;align-items:center;justify-content:center}
 #feed{position:fixed;left:12px;top:calc(66px + env(safe-area-inset-top));display:flex;flex-direction:column;gap:4px;pointer-events:none;max-width:78%}
+#archBanner{position:fixed;left:12px;right:12px;top:calc(12px + env(safe-area-inset-top));z-index:30;border-radius:14px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:14px}
+.archItem{padding:10px 0;border-bottom:1px solid rgba(255,255,255,.08);cursor:pointer}
+.archItem small{color:var(--dim)}
 #extinct{position:fixed;left:12px;right:12px;bottom:calc(130px + env(safe-area-inset-bottom));border-radius:16px;padding:14px;font-size:14px;pointer-events:auto}
 #extinct p{color:var(--dim);font-size:13px;margin:6px 0 10px}
 #feed div{border-radius:10px;padding:5px 9px;font-size:12px;transition:opacity .8s}
@@ -121,6 +124,15 @@ table.cmp th{color:var(--dim);font-weight:500}
   <div class="plist" id="histBody"></div>
 </div>
 
+<div id="arch" class="panel glass hidden">
+  <div class="ch"><b>📚 Dalarkivet</b><button id="archClose">✕</button></div>
+  <div class="plist">
+    <p style="color:var(--dim);font-size:13px">Här sparas dalar som har levt. Tryck på en dal för att gå in och läsa dess krönika, grafer och släkter. Den levande dalen fortsätter som vanligt när du går tillbaka.</p>
+    <div style="margin:8px 0 12px"><button class="btn" id="archSaveNow">📥 Spara den här dalen i arkivet nu</button></div>
+    <div id="archList"></div>
+  </div>
+</div>
+<div id="archBanner" class="glass hidden"><span id="archBannerTxt"></span> <button class="btn pri" id="archBack">⟵ Tillbaka</button></div>
 <div id="lex" class="panel glass hidden">
   <div class="ch"><b>Ordbok</b><button id="lexClose">✕</button></div>
   <div class="plist" id="lexList"></div>
@@ -140,9 +152,9 @@ table.cmp th{color:var(--dim);font-weight:500}
     <p>Fas 3: de kan låta, höra, ge varandra energi, gräva och bära jord. Översättaren i 💬 gissar vad ljuden betyder genom att se i vilka situationer de används. Tryck 🔇 för att höra dem när du är nära.</p>
     <p>Fas 2: de kan få barn. Barnen ärver föräldrarnas medfödda hjärnor och kroppar, med små slumpvisa förändringar – det de lärt sig under livet ärvs inte. Döda kroppar blir näring i jorden. Snart kommer röster och ett eget språk.</p>
     <p id="menuStats" style="color:var(--dim);font-size:12px"></p>
-    <div style="margin-top:16px"><button class="btn" id="newWorldBtn">🌱 Starta en ny värld</button></div>
+    <div style="margin-top:16px"><button class="btn" id="archBtn">📚 Dalarkivet</button> <button class="btn" id="newWorldBtn">🌱 Starta en ny värld</button></div>
     <div id="confirmNew" class="hidden" style="margin-top:12px">
-      <p>Den här dalen och allt som hänt i den försvinner för alltid. Säker?</p>
+      <p>Den här dalen slutar leva. Hela dess historia sparas i 📚 dalarkivet, så du kan läsa den när du vill. Säker?</p>
       <button class="btn pri" id="confirmYes">Ja, börja om</button> <button class="btn" id="confirmNo">Nej</button>
     </div>
   </div>

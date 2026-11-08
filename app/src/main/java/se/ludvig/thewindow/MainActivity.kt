@@ -61,6 +61,34 @@ class MainActivity : Activity() {
         fun wipe() {
             File(filesDir, "world.json").delete()
         }
+
+        // ---- dalarkivet: gamla dalar sparas som egna filer ----
+        private fun archDir(): File { val d = File(filesDir, "archive"); d.mkdirs(); return d }
+        private fun safeId(id: String) = id.replace(Regex("[^A-Za-z0-9_-]"), "_")
+
+        @JavascriptInterface
+        fun archiveSave(id: String, meta: String, data: String) {
+            val d = archDir(); val s = safeId(id)
+            val tmp = File(d, "$s.tmp"); tmp.writeText(data); tmp.renameTo(File(d, "$s.json"))
+            File(d, "$s.meta").writeText(meta)
+        }
+
+        @JavascriptInterface
+        fun archiveList(): String {
+            val metas = archDir().listFiles { f -> f.name.endsWith(".meta") }?.map { it.readText() } ?: emptyList()
+            return "[" + metas.joinToString(",") + "]"
+        }
+
+        @JavascriptInterface
+        fun archiveLoad(id: String): String {
+            val f = File(archDir(), safeId(id) + ".json")
+            return if (f.exists()) f.readText() else ""
+        }
+
+        @JavascriptInterface
+        fun archiveDelete(id: String) {
+            val s = safeId(id); File(archDir(), "$s.json").delete(); File(archDir(), "$s.meta").delete()
+        }
     }
 
     override fun onPause() {
