@@ -112,7 +112,7 @@ function frame(ts) {
     let simulated = 0;
     if (!busy && !paused) {
       simAcc += rdt * speed; const t0 = performance.now();
-      while (simAcc >= DT) { world.step(); simAcc -= DT; simulated += DT; if (performance.now() - t0 > 14) { simAcc = 0; break; } }
+      while (simAcc >= DT) { world.step(); simAcc -= DT; simulated += DT; if (performance.now() - t0 > (speed > 30 ? 26 : 14)) { simAcc = 0; break; } } // på hög fart får simuleringen mer av varje bildruta
     }
     effWin.push([rdt, simulated]); if (effWin.length > 40) effWin.shift();
     for (const c of world.creatures) c.watched = c === follow ? 1 : 0;
@@ -370,10 +370,10 @@ function renderHist() {
     add('Temperatur', 'c3', [{ n: '°C', c: '#f2b76b', f: p => p.temp }], { min: Math.min(-5, ...H.map(h => h.temp)) });
   } else if (histTab === 'evo') {
     html += `<p>Genomsnitt för alla som lever. Om kurvorna rör sig är det evolution: de som klarade sig bäst har fått fler barn.</p>`;
-    add('Hjärnans storlek (neuroner)', 'c1', [{ n: 'neuroner', c: '#c9a0ff', f: p => p.brain }]);
+    add('Hjärnans storlek (neuroner) och minne', 'c1', [{ n: 'neuroner', c: '#c9a0ff', f: p => p.brain }, { n: 'minne (minuter)', c: '#7fd1c9', f: p => p.mem ?? null }], {}, 'Inga tak längre: hjärnan kan växa till 200 neuroner och minnet kan bli mycket långt – men stora hjärnor kostar energi.');
     add('Kroppens längd och antal benpar', 'c2', [{ n: 'kroppslängd', c: '#f2b76b', f: p => p.body }, { n: 'benpar × 10', c: '#7fd1c9', f: p => p.legs == null ? null : p.legs * 10 }]);
     add('Gift i växterna och tålighet hos varelserna', 'c3', [{ n: 'växternas gift', c: '#b07cff', f: p => p.tox }, { n: 'varelsernas tålighet', c: '#7fd1a0', f: p => p.tol }], { min: 0 });
-    add('Sjukdomar: andel smittade och hur farlig sjukdomen är', 'c7', [{ n: '% smittade', c: '#9fd16b', f: p => p.sick ?? null }, { n: 'farlighet × 100', c: '#f2788c', f: p => p.vir == null ? null : p.vir * 100 }], { min: 0 }, 'Sjukdomen och deras immunförsvar evolverar mot varandra.');
+    add('Sjukdomar: andel smittade och hur farlig sjukdomen är', 'c7', [{ n: '% smittade', c: '#9fd16b', f: p => p.sick ?? null }, { n: 'farlighet × 100', c: '#f2788c', f: p => p.vir == null ? null : p.vir * 100 }, { n: '% som smittar via kött', c: '#c9a0ff', f: p => p.parE ?? null }], { min: 0 }, 'Sjukdomen och deras immunförsvar evolverar mot varandra. Lila: hur mycket sjukdomen har anpassat sig till att smitta den som äter den sjuka.');
     add('Kost: växtätare (0) eller köttätare (1)', 'c5', [{ n: 'köttätargen', c: '#f2788c', f: p => p.carn ?? null }], { min: 0 }, 'Över 0,25 har de tänder nog att jaga levande byten.');
     add('Antal arter och matförråd på marken', 'c6', [{ n: 'arter', c: '#c9a0ff', f: p => p.species ?? null }, { n: 'förråd / 10', c: '#f2b76b', f: p => p.items == null ? null : p.items / 10 }], { min: 0 });
     add('Hur mycket de pratar och gräver (per 6 timmar)', 'c4', [{ n: 'yttranden / 10', c: '#f2d36b', f: p => p.utt / 10 }, { n: 'grävda rutor', c: '#c98b5b', f: p => p.digs }]);
@@ -389,7 +389,7 @@ function renderHist() {
     if (!F) html += '<p>Stamföräldrarnas gener sparades inte i den här dalen (den startades i en äldre version). Starta en ny värld för att kunna jämföra.</p>';
     else if (!al.length) html += '<p>Ingen lever just nu att jämföra med.</p>';
     else {
-      const rows = [['Kroppssegment', g => g.seg], ['Segmentlängd', g => g.segL], ['Benpar', g => g.legs], ['Benlängd', g => g.legL], ['Ögonstorlek', g => g.eye], ['Svans (andel med)', g => g.tail > 0 ? 1 : 0, true], ['Antenner (andel med)', g => g.ant > 0 ? 1 : 0, true], ['Neuroner i hjärnan', (g, c) => c ? c.br.H : g.hid], ['Tålighet mot gift', g => g.tol || 0], ['Nyfikenhet (brus)', g => g.explore], ['Inlärningstakt × 1000', g => g.lr * 1000], ['Livslängd (dygn)', g => g.maxAge / DAY], ['Köttätargen', g => g.carn || 0]];
+      const rows = [['Kroppssegment', g => g.seg], ['Segmentlängd', g => g.segL], ['Benpar', g => g.legs], ['Benlängd', g => g.legL], ['Ögonstorlek', g => g.eye], ['Svans (andel med)', g => g.tail > 0 ? 1 : 0, true], ['Antenner (andel med)', g => g.ant > 0 ? 1 : 0, true], ['Neuroner i hjärnan', (g, c) => c ? c.br.H : g.hid], ['Tålighet mot gift', g => g.tol || 0], ['Nyfikenhet (brus)', g => g.explore], ['Inlärningstakt × 1000', g => g.lr * 1000], ['Minne (minuter)', g => (g.mem || 3000) / 60], ['Livslängd (dygn)', g => g.maxAge / DAY], ['Köttätargen', g => g.carn || 0]];
       const fmt = (v, pct) => pct ? Math.round(v * 100) + ' %' : (Math.abs(v) >= 10 ? Math.round(v) : Math.round(v * 100) / 100);
       html += `<p>Stamföräldrarna ${F.map(f => esc(f.name)).join(' och ')} jämfört med genomsnittet av de ${al.length} som lever nu (generation ${world.maxGen}).</p><table class="cmp"><tr><th></th><th>Då</th><th>Nu</th></tr>` +
         rows.map(([n, f, pct]) => { const then = F.reduce((a, x) => a + f(x.g, null), 0) / F.length, now = al.reduce((a, c) => a + f(c.g, c), 0) / al.length; const ch = then ? (now - then) / Math.abs(then) : now; const mark = Math.abs(ch) > 0.15 ? (ch > 0 ? ' ▲' : ' ▼') : ''; return `<tr><td>${n}</td><td>${fmt(then, pct)}</td><td>${fmt(now, pct)}${mark}</td></tr>`; }).join('') + '</table><p style="color:var(--dim);font-size:12px">▲▼ = förändrats mer än 15 %.</p>';

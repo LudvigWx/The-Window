@@ -281,10 +281,16 @@ class World {
     if (C.name !== was) this.chron({ istid: 'Det blir långsamt kallare år för år. En istid är på väg.', torka: 'Åren blir varmare och torrare. Regnen kommer allt mer sällan.', blött: 'Klimatet blir blötare. Det regnar oftare än någon kan minnas.', vanligt: 'Klimatet återgår sakta till det vanliga.' }[C.name]);
   }
   // ---------- sjukdomar: parasiter som evolverar och smittar vid beröring ----------
+  fleshInfect(c, src, bite) {
+    const P = src.par; if (!P || c.par || (c.immT || 0) > this.time || !(P.e > 0)) return;
+    if (this.rng.next() < bite * 0.2 * P.e * (0.4 + P.v) * this.match(P.a, c.g.lock ?? 0.5)) { this.infect(c, P); this.first('kuru', `${c.name} blir sjuk av att äta ${src.name}. Sjukdomen har hittat en ny väg: genom köttet.`, c); }
+  }
   match(a, lock) { let d = Math.abs(a - lock); d = Math.min(d, 1 - d); return Math.exp(-((d / 0.1) ** 2)); }
   infect(o, par) {
     const r = this.rng;
-    o.par = { a: (par.a + r.gauss() * 0.015 + 1) % 1, v: clamp(par.v + r.gauss() * 0.03, 0.05, 1), id: par.id };
+    let t = clamp((par.t ?? 0.85) + r.gauss() * 0.04, 0, 1), e = clamp((par.e ?? 0.15) + r.gauss() * 0.04, 0, 1);
+    if (t + e > 1) { const k = 1 / (t + e); t *= k; e *= k; } // en sjukdom kan inte vara bäst på allt
+    o.par = { a: (par.a + r.gauss() * 0.015 + 1) % 1, v: clamp(par.v + r.gauss() * 0.03, 0.05, 1), id: par.id, t, e };
   }
   updateDisease(dt) {
     const r = this.rng; let sick = 0;
@@ -297,14 +303,14 @@ class World {
       for (let k = -1; k <= 1; k++) for (const o of this.bins[wrapT(col + k)]) {
         if (o === c || !o.alive || o.par || (o.immT || 0) > this.time) continue;
         if (Math.abs(wrapD(o.x - c.x)) > (o.w + c.w) / 2 + 6 || Math.abs(o.y - c.y) > 14) continue;
-        if (r.next() < 0.03 * dt * (0.4 + P.v) * this.match(P.a, o.g.lock ?? 0.5)) { this.infect(o, P); this.first('spread', `${c.name} smittar ${o.name}. Sjukdomen sprids genom beröring.`); }
+        if (r.next() < 0.035 * (P.t ?? 0.85) * dt * (0.4 + P.v) * this.match(P.a, o.g.lock ?? 0.5)) { this.infect(o, P); this.first('spread', `${c.name} smittar ${o.name}. Sjukdomen sprids genom beröring.`); }
       }
       if (r.next() < dt / (0.7 * DAY) * (1 - P.v * 0.5)) { c.par = null; c.immT = this.time + 3 * DAY; this.first('recover', `${c.name} blir frisk igen och är skyddad ett tag.`); }
     }
     this.sickN = sick;
     if (!sick && this.aliveCount >= 12 && this.time > this.plague.next) {
       const al = this.creatures.filter(c => c.alive), h = al[r.int(al.length)];
-      h.par = { a: ((h.g.lock ?? 0.5) + r.gauss() * 0.04 + 1) % 1, v: r.range(0.2, 0.45), id: ++this.plague.n };
+      { const e = r.range(0, 0.3); h.par = { a: ((h.g.lock ?? 0.5) + r.gauss() * 0.04 + 1) % 1, v: r.range(0.2, 0.45), id: ++this.plague.n, t: 1 - e, e }; }
       this.plague.next = this.time + r.range(15, 40) * DAY;
       this.chron(this.plague.n === 1 ? `${h.name} blir sjuk. Det är den första sjukdomen i dalens historia, och den smittar när varelserna rör vid varandra.` : `En ny sjukdom dyker upp hos ${h.name}.`, h);
     }
@@ -491,17 +497,17 @@ class World {
 
   // ---------- hjärnan: tänker och lär sig av belöning ----------
   think(c, reward) {
-    const br = c.br, H = br.H, x = c.inp, hp = c.hs, r = this.rng;
-    const lam = Math.exp(-DT / 1.0), nd = Math.exp(-DT / 0.5), ns = Math.sqrt(1 - nd * nd), sig = c.g.explore;
+    const br = c.br, H = br.H, x = c.inp, hp = c.hs, r = this.rng, TD = 2 * DT;
+    const lam = Math.exp(-TD / 1.0), nd = Math.exp(-TD / 0.5), ns = Math.sqrt(1 - nd * nd), sig = c.g.explore;
     // lärande: belöning jämfört med vad den brukar få
-    const rate = reward / DT; const adv = clamp(rate - c.rbar, -3, 6); c.rbar += (rate - c.rbar) * DT / 60;
-    const k = c.g.lr * adv * DT;
+    const rate = reward / TD; const adv = clamp(rate - c.rbar, -3, 6); c.rbar += (rate - c.rbar) * TD / 60;
+    const k = c.g.lr * adv * TD;
     const wih = br.wih, whh = br.whh, bh = br.bh, who = br.who, bo = br.bo, eih = c.eih, ehh = c.ehh, ebh = c.ebh, eho = c.eho, ebo = c.ebo;
     const upd = (w, e) => { for (let i = 0; i < w.length; i++) { const v = w[i] + k * e[i]; w[i] = v > 4 ? 4 : v < -4 ? -4 : v; } };
     if (k !== 0) { upd(wih, eih); upd(whh, ehh); upd(bh, ebh); upd(who, eho); upd(bo, ebo); }
     // Inlärda ändringar bleknar långsamt tillbaka mot det medfödda (minnen som inte förstärks glöms).
-    if (++c.learnN >= 20) {
-      c.learnN = 0; const fade = 20 * DT / 3000, b0 = c.br0;
+    if (++c.learnN >= 10) {
+      c.learnN = 0; const fade = 10 * TD / (c.g.mem || 3000), b0 = c.br0; // minnet är ärftligt: hur länge det inlärda sitter kvar
       const fd = (w, w0) => { for (let i = 0; i < w.length; i++) w[i] -= fade * (w[i] - w0[i]); };
       fd(wih, b0.wih); fd(whh, b0.whh); fd(bh, b0.bh); fd(who, b0.who); fd(bo, b0.bo);
     }
@@ -592,10 +598,10 @@ class World {
           if (item.owner === c.id && this.time - item.t > 0.25 * DAY) this.first('owncache', `${c.name} går tillbaka och äter av maten den lade undan för länge sedan. Ett riktigt förråd!`);
           else this.first('eatitem', `${c.name} äter av mat som någon har lagt på marken.`);
         } else if (corpse) {
-          bite = Math.min(corpse.flesh, bite); corpse.flesh -= bite; gain = bite * 1.6 * meatEff;
+          bite = Math.min(corpse.flesh, bite); corpse.flesh -= bite; gain = bite * 1.6 * meatEff; this.fleshInfect(c, corpse, bite);
           this.first('scav', `${c.name} äter av den döda kroppen efter ${corpse.name}. Det har aldrig hänt i dalen förut.`);
         } else if (prey) {
-          const dmg = bite * 1.3; prey.energy -= dmg; prey.pain = Math.min(1, prey.pain + 0.15); prey.attackedT = this.time; prey.attacker = c.name; gain = dmg * 1.1 * meatEff;
+          const dmg = bite * 1.3; this.fleshInfect(c, prey, bite); prey.energy -= dmg; prey.pain = Math.min(1, prey.pain + 0.15); prey.attackedT = this.time; prey.attacker = c.name; gain = dmg * 1.1 * meatEff;
           this.stats.hunts = (this.stats.hunts || 0) + 1;
           this.first('hunt', `${c.name} biter ${prey.name}. För första gången jagar en varelse en annan.`);
         } else if (c.carry === FOOD) {
@@ -720,8 +726,8 @@ class World {
     for (const c of this.creatures) {
       c.px = c.x; c.py = c.y; // förra läget, så att fönstret kan rita mjuka rörelser mellan stegen
       if (!c.alive) continue;
-      this.sense(c);
-      this.think(c, c.lastReward || 0);
+      c.rAcc = (c.rAcc || 0) + (c.lastReward || 0);
+      this.sense(c); if (((this.stepN + c.id) & 1) === 0 || !c.hs2) { this.think(c, c.rAcc); c.rAcc = 0; } // sinnen och hjärna: tio gånger per sekund
       const e0 = c.energy, p0 = c.pain, gi = c.gainIn; c.gain = gi; c.gainIn = 0;
       this.body(c);
       // Belöning = kroppens egna signaler: mat smakar gott (bättre ju hungrigare),
@@ -785,7 +791,7 @@ class World {
       legs: al.length ? Math.round(avg(c => c.g.legs) * 100) / 100 : null, tol: al.length ? Math.round(avg(c => c.g.tol || 0) * 100) / 100 : null,
       tox: Math.round(this.plants.reduce((a, p) => a + (p.tox || 0), 0) / pl * 100) / 100, gen: this.maxGen,
       carn: al.length ? Math.round(avg(c => c.g.carn || 0) * 100) / 100 : null, species: this.species.filter(s => s.n >= 3).length, items: this.items.length,
-      sick: al.length ? Math.round(al.filter(c => c.par).length / al.length * 100) : null, vir: al.some(c => c.par) ? Math.round(avg(c => c.par ? c.par.v : 0) / (al.filter(c => c.par).length / n) * 100) / 100 : null, climT: Math.round(this.clim.t * 10) / 10, climW: Math.round(this.clim.w * 100) / 100
+      sick: al.length ? Math.round(al.filter(c => c.par).length / al.length * 100) : null, vir: al.some(c => c.par) ? Math.round(avg(c => c.par ? c.par.v : 0) / (al.filter(c => c.par).length / n) * 100) / 100 : null, parE: al.some(c => c.par) ? Math.round(al.filter(c => c.par).reduce((a, c) => a + (c.par.e ?? 0.15), 0) / al.filter(c => c.par).length * 100) : null, mem: al.length ? Math.round(avg(c => c.g.mem || 3000) / 60) : null, climT: Math.round(this.clim.t * 10) / 10, climW: Math.round(this.clim.w * 100) / 100
     });
     this.iv = { births: 0, deaths: {}, utt: 0, digs: 0 };
     if (this.hist.length > 1600) this.hist = this.hist.filter((h, i) => i % 2 === 0 || i > this.hist.length - 200);
@@ -866,12 +872,14 @@ class World {
     const r = this.rng, g = {}, pick = k => (r.next() < 0.5 ? a[k] : b[k]);
     const mutF = (k, sd, lo, hi) => { g[k] = clamp(pick(k) * Math.exp(r.gauss() * sd), lo, hi); };
     const mutI = (k, lo, hi) => { g[k] = pick(k); if (r.next() < 0.05) g[k] = clamp(g[k] + (r.next() < 0.5 ? -1 : 1), lo, hi); };
-    mutF('segL', 0.05, 2, 22); mutF('segH', 0.05, 2, 18); mutF('legL', 0.05, 1.5, 20); mutF('eye', 0.05, 0.6, 6);
-    mutF('explore', 0.08, 0.05, 0.6); mutF('lr', 0.08, 0.0005, 0.03); mutF('maxAge', 0.05, 6 * DAY, 60 * DAY);
+    mutF('segL', 0.05, 1.5, 40); mutF('segH', 0.05, 1.5, 30); mutF('legL', 0.05, 1, 40); mutF('eye', 0.05, 0.4, 10);
+    mutF('explore', 0.08, 0.02, 1); mutF('lr', 0.08, 0.0001, 0.1); mutF('maxAge', 0.05, 4 * DAY, 150 * DAY);
+    g.mem = clamp((pick('mem') ?? 3000) * Math.exp(r.gauss() * 0.08), 200, 200000);
     g.tol = clamp((pick('tol') || 0) + r.gauss() * 0.03, 0, 1);
     g.carn = clamp((pick('carn') || 0) + r.gauss() * 0.035, 0, 1);
     g.lock = ((pick('lock') ?? r.next()) + r.gauss() * 0.02 + 1) % 1; // immunförsvarets 'lås' – sjukdomar måste passa in i det
-    mutI('seg', 1, 8); mutI('legs', 0, 10); mutI('pattern', 0, 2); mutI('hid', 3, 64);
+    mutI('seg', 1, 14); mutI('legs', 0, 20); mutI('pattern', 0, 2); mutI('hid', 3, 200);
+    if (r.next() < 0.02) g.hid = clamp(g.hid + (r.next() < 0.5 ? -1 : 1) * (2 + r.int(4)), 3, 200); // ibland ett större språng i hjärnans storlek
     for (const k of ['ant', 'tail']) { g[k] = pick(k); if (g[k] === 0 && r.next() < 0.03) g[k] = r.range(2, 6); else if (g[k] > 0) { g[k] *= Math.exp(r.gauss() * 0.06); if (r.next() < 0.02) g[k] = 0; } }
     for (const k of ['hue', 'hue2']) g[k] = (pick(k) + r.gauss() * 7 + 360) % 360;
     return g;
