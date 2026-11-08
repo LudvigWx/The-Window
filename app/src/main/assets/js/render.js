@@ -303,6 +303,7 @@ class Renderer {
       if (G.pattern === 1) { g.fillStyle = col2(48); for (let s = -1; s <= 1; s++) g.fillRect(sx + s * rx * 0.45 - 0.6, bodyY - ry * 0.9, 1.2, ry * 1.3); }
       if (G.pattern === 2) { g.fillStyle = col2(55); for (let s = 0; s < 3; s++) { g.beginPath(); g.arc(sx + Math.sin(i * 3 + s * 2) * rx * 0.5, bodyY - ry * 0.3 + Math.cos(s * 2.7) * ry * 0.3, 0.9, 0, 6.283); g.fill(); } }
     }
+    if (c.par) { g.fillStyle = 'rgba(190,220,120,0.75)'; for (let i = 0; i < 4; i++) { g.beginPath(); g.arc(segX(i % G.seg) + Math.sin(c.id + i * 2.1) * G.segL * 0.3, bodyY + Math.cos(c.id * 1.7 + i) * G.segH * 0.25, 0.7, 0, 6.283); g.fill(); } } // sjuk: bleka prickar
     legsAt.forEach((lx, k) => drawLeg(lx, c.walk * 2 + k * 2.2, false));
     // huvud: antenner, öga, mun
     const hx = segX(G.seg - 1), hr = G.segL * 0.62;

@@ -237,7 +237,7 @@ function updCard() {
     `Barn: <b>${c.kids}</b>${c.pnames ? ` · Föräldrar: <b>${esc(c.pnames.join(' och '))}</b>` : ''}${c.age < ADULT ? ' · <b>för ung för att få barn</b>' : ''}<br>` +
     [c.say ? `Senast sa: <b>"${esc(c.say.txt)}"</b>` : 'Har aldrig låtit', c.carry ? `Bär: <b>${MAT[c.carry]}</b>` : '', c.builds ? `Har byggt ${c.builds} gånger` : ''].filter(Boolean).join(' · ') + '<br>' +
     `Plats: ${world.zoneName(Math.floor(c.x / TS))} · Kost: ${(G.carn || 0) > 0.6 ? 'köttätare' : (G.carn || 0) > 0.25 ? 'allätare (kan jaga)' : 'växtätare'}${c.sp && world.species.find(s => s.id === c.sp) ? ` · Art: <b>${esc(world.species.find(s => s.id === c.sp).name)}</b>` : ''}<br>` +
-    `Kropp: ${G.seg} segment, ${G.legs} benpar${G.tail ? ', svans' : ''}${G.ant ? ', antenner' : ''}<br>Hjärna: ${c.br.H} neuroner, lär sig av belöning och smärta`;
+    `Kropp: ${G.seg} segment, ${G.legs} benpar${G.tail ? ', svans' : ''}${G.ant ? ', antenner' : ''}<br>Hjärna: ${c.br.H} neuroner, lär sig av belöning och smärta${c.par ? `<br>🤒 Sjuk (sjukdom nr ${c.par.id}, farlighet ${Math.round(c.par.v * 100)} %)` : ''}`;
   if (showBrain) drawBrain(c);
   if (showKin && kinTick++ % 8 === 0) renderKin(c);
 }
@@ -317,7 +317,7 @@ function playVoices() {
 try { if (localStorage.getItem('thewindow-sound') === '1') setSound(true); } catch (e) { }
 
 // ---------- historia: grafer ----------
-const CAUSE_SV = { hunger: 'hunger', thirst: 'törst', cold: 'kyla', age: 'ålder', poison: 'gift', eaten: 'rovdjur', other: 'okänt' };
+const CAUSE_SV = { hunger: 'hunger', thirst: 'törst', cold: 'kyla', age: 'ålder', poison: 'gift', disease: 'sjukdom', eaten: 'rovdjur', other: 'okänt' };
 let histTab = 'pop', kinTick = 0;
 document.querySelectorAll('#histTabs button').forEach(b => b.onclick = () => { histTab = b.dataset.t; document.querySelectorAll('#histTabs button').forEach(x => x.classList.toggle('on', x === b)); renderHist(); });
 $('#histClose').onclick = () => $('#histP').classList.add('hidden');
@@ -366,12 +366,14 @@ function renderHist() {
   } else if (histTab === 'env') {
     add('Mat i dalen (växternas samlade massa)', 'c1', [{ n: 'mat', c: '#7fd1a0', f: p => p.food, w: 2.2 }], {}, 'Om maten rasar när befolkningen växer har de ätit ur dalen.');
     add('Vatten ovan jord (rutor)', 'c2', [{ n: 'vatten', c: '#6fa8ff', f: p => p.water }]);
+    add('Klimatet: hur mycket varmare/kallare och blötare än vanligt', 'c4', [{ n: '°C jämfört med vanligt', c: '#f2788c', f: p => p.climT ?? null }, { n: 'regn × 10 (10 = vanligt)', c: '#6fa8ff', f: p => p.climW == null ? null : p.climW * 10 }], {}, 'Klimatet driver långsamt mellan istider, torka och blöta perioder.');
     add('Temperatur', 'c3', [{ n: '°C', c: '#f2b76b', f: p => p.temp }], { min: Math.min(-5, ...H.map(h => h.temp)) });
   } else if (histTab === 'evo') {
     html += `<p>Genomsnitt för alla som lever. Om kurvorna rör sig är det evolution: de som klarade sig bäst har fått fler barn.</p>`;
     add('Hjärnans storlek (neuroner)', 'c1', [{ n: 'neuroner', c: '#c9a0ff', f: p => p.brain }]);
     add('Kroppens längd och antal benpar', 'c2', [{ n: 'kroppslängd', c: '#f2b76b', f: p => p.body }, { n: 'benpar × 10', c: '#7fd1c9', f: p => p.legs == null ? null : p.legs * 10 }]);
     add('Gift i växterna och tålighet hos varelserna', 'c3', [{ n: 'växternas gift', c: '#b07cff', f: p => p.tox }, { n: 'varelsernas tålighet', c: '#7fd1a0', f: p => p.tol }], { min: 0 });
+    add('Sjukdomar: andel smittade och hur farlig sjukdomen är', 'c7', [{ n: '% smittade', c: '#9fd16b', f: p => p.sick ?? null }, { n: 'farlighet × 100', c: '#f2788c', f: p => p.vir == null ? null : p.vir * 100 }], { min: 0 }, 'Sjukdomen och deras immunförsvar evolverar mot varandra.');
     add('Kost: växtätare (0) eller köttätare (1)', 'c5', [{ n: 'köttätargen', c: '#f2788c', f: p => p.carn ?? null }], { min: 0 }, 'Över 0,25 har de tänder nog att jaga levande byten.');
     add('Antal arter och matförråd på marken', 'c6', [{ n: 'arter', c: '#c9a0ff', f: p => p.species ?? null }, { n: 'förråd / 10', c: '#f2b76b', f: p => p.items == null ? null : p.items / 10 }], { min: 0 });
     add('Hur mycket de pratar och gräver (per 6 timmar)', 'c4', [{ n: 'yttranden / 10', c: '#f2d36b', f: p => p.utt / 10 }, { n: 'grävda rutor', c: '#c98b5b', f: p => p.digs }]);

@@ -82,6 +82,7 @@ class World {
     this.items = []; this.species = []; this.speciesAcc = 0; this.nextSp = 1;
     this.hist = []; this.histAcc = 0; this.causes = {}; this.iv = { births: 0, deaths: {}, utt: 0, digs: 0 }; this.founders = null;
     this.moist = new Float32Array(WW).fill(0.6); this.weather = { rain: 0, until: 0, next: 0.3 * DAY }; this.snow = 0; this.temp = 12; this.waterAcc = 0;
+    this.clim = { t: 0, w: 1, tT: 0, wT: 1, next: 60 * DAY, name: 'vanligt' }; this.plague = { next: 12 * DAY, n: 0 };
     this.wpos = null; this.wlist = [];
     this.sounds = []; this.lex = {}; this.ctxTot = {}; this.uttTot = 0; this.dirty = []; this.stats = { digs: 0, builds: 0, gifts: 0 };
     if (names) { this.generate(); this.initWater(); this.seedPlants(); this.spawnFounders(names); }
@@ -95,7 +96,7 @@ class World {
   daylight() { return clamp(this.sunHeight() * 1.6 + 0.35, 0.06, 1); }
   yearFrac() { return (this.time / YEAR) % 1; } // 0 = vårens mitt, 0.25 = sommar, 0.5 = höst, 0.75 = vinter
   season() { return ['Vår', 'Sommar', 'Höst', 'Vinter'][Math.floor(((this.yearFrac() + 0.125) % 1) * 4)]; }
-  calcTemp() { return 11 + 10 * Math.sin(this.yearFrac() * 2 * Math.PI) + (this.daylight() - 0.5) * 6 - this.weather.rain * 3; }
+  calcTemp() { return 11 + (this.clim ? this.clim.t : 0) + 10 * Math.sin(this.yearFrac() * 2 * Math.PI) + (this.daylight() - 0.5) * 6 - this.weather.rain * 3; }
   zoneT(x) { return this.zoneE ? -this.zoneE[x] * 6 : 0; }                    // berg kallare, lågland varmare
   zoneWet(x) { return this.zoneE ? 0.45 + 0.75 * Math.abs(this.zoneE[x]) : 1; } // slätten är torrast
   zoneName(x) { const e = this.zoneE ? this.zoneE[wrapT(x)] : 0; return e > 0.35 ? 'Bergen' : e < -0.35 ? 'Låglandet' : 'Slätten'; }
@@ -266,9 +267,51 @@ class World {
       if ((below === T.DIRT || below === T.GRASS || below === T.SAND) && tl[y * WW + wrapT(x - 1)] !== T.WATER && tl[y * WW + wrapT(x + 1)] !== T.WATER && r.next() < 0.004 * dt) { tl[i] = T.AIR; this.remW(i); this.moist[x] = Math.min(1.5, this.moist[x] + 0.3); }
     }
   }
+  // ---------- klimatet: driver långsamt mellan istider, torka och blöta perioder ----------
+  updateClimate(dt) {
+    const C = this.clim, r = this.rng, k = dt / (12 * DAY);
+    C.t += (C.tT - C.t) * k; C.w += (C.wT - C.w) * k;
+    if (this.time < C.next) return;
+    const roll = r.next(), was = C.name;
+    if (roll < 0.25) { C.tT = r.range(-5, -2.5); C.wT = r.range(0.7, 1.1); C.name = 'istid'; }
+    else if (roll < 0.45) { C.tT = r.range(1.5, 4); C.wT = r.range(0.55, 0.85); C.name = 'torka'; }
+    else if (roll < 0.6) { C.tT = r.range(0, 2.5); C.wT = r.range(1.2, 1.45); C.name = 'blött'; }
+    else { C.tT = r.range(-1.5, 1.5); C.wT = r.range(0.85, 1.15); C.name = 'vanligt'; }
+    C.next = this.time + r.range(40, 110) * DAY;
+    if (C.name !== was) this.chron({ istid: 'Det blir långsamt kallare år för år. En istid är på väg.', torka: 'Åren blir varmare och torrare. Regnen kommer allt mer sällan.', blött: 'Klimatet blir blötare. Det regnar oftare än någon kan minnas.', vanligt: 'Klimatet återgår sakta till det vanliga.' }[C.name]);
+  }
+  // ---------- sjukdomar: parasiter som evolverar och smittar vid beröring ----------
+  match(a, lock) { let d = Math.abs(a - lock); d = Math.min(d, 1 - d); return Math.exp(-((d / 0.1) ** 2)); }
+  infect(o, par) {
+    const r = this.rng;
+    o.par = { a: (par.a + r.gauss() * 0.015 + 1) % 1, v: clamp(par.v + r.gauss() * 0.03, 0.05, 1), id: par.id };
+  }
+  updateDisease(dt) {
+    const r = this.rng; let sick = 0;
+    for (const c of this.creatures) {
+      if (!c.alive || !c.par) continue;
+      sick++;
+      const P = c.par;
+      c.energy -= P.v * 0.014 * dt; c.pain = Math.min(1, c.pain + P.v * 0.05 * dt);
+      const col = wrapT(Math.floor(c.x / TS));
+      for (let k = -1; k <= 1; k++) for (const o of this.bins[wrapT(col + k)]) {
+        if (o === c || !o.alive || o.par || (o.immT || 0) > this.time) continue;
+        if (Math.abs(wrapD(o.x - c.x)) > (o.w + c.w) / 2 + 6 || Math.abs(o.y - c.y) > 14) continue;
+        if (r.next() < 0.03 * dt * (0.4 + P.v) * this.match(P.a, o.g.lock ?? 0.5)) { this.infect(o, P); this.first('spread', `${c.name} smittar ${o.name}. Sjukdomen sprids genom beröring.`); }
+      }
+      if (r.next() < dt / (0.7 * DAY) * (1 - P.v * 0.5)) { c.par = null; c.immT = this.time + 3 * DAY; this.first('recover', `${c.name} blir frisk igen och är skyddad ett tag.`); }
+    }
+    this.sickN = sick;
+    if (!sick && this.aliveCount >= 12 && this.time > this.plague.next) {
+      const al = this.creatures.filter(c => c.alive), h = al[r.int(al.length)];
+      h.par = { a: ((h.g.lock ?? 0.5) + r.gauss() * 0.04 + 1) % 1, v: r.range(0.2, 0.45), id: ++this.plague.n };
+      this.plague.next = this.time + r.range(15, 40) * DAY;
+      this.chron(this.plague.n === 1 ? `${h.name} blir sjuk. Det är den första sjukdomen i dalens historia, och den smittar när varelserna rör vid varandra.` : `En ny sjukdom dyker upp hos ${h.name}.`, h);
+    }
+  }
   updateWeather(dt) {
     const W8 = this.weather, yf = this.yearFrac();
-    if (W8.rain > 0 && this.time > W8.until) { W8.rain = 0; W8.next = this.time + this.rng.range(0.4, 2.5) * DAY * (yf > 0.1 && yf < 0.4 ? 1.6 : 1); }
+    if (W8.rain > 0 && this.time > W8.until) { W8.rain = 0; W8.next = this.time + this.rng.range(0.4, 2.5) * DAY * (yf > 0.1 && yf < 0.4 ? 1.6 : 1) / this.clim.w; }
     else if (W8.rain === 0 && this.time > W8.next) {
       W8.rain = this.rng.range(0.3, 1); W8.until = this.time + this.rng.range(0.08, 0.4) * DAY;
       this.first('rain', this.temp < 0 ? 'Det börjar snöa för första gången.' : 'Det börjar regna i dalen för första gången.');
@@ -283,14 +326,14 @@ class World {
         let x = this.rng.int(WW); if (this.rng.next() * 1.2 > this.zoneWet(x)) x = this.rng.int(WW); let y = 0; while (y < WH - 1 && this.tiles[y * WW + x] === T.AIR) y++; y--;
         if (y > 0 && this.tiles[y * WW + x] === T.AIR && !this.bins[x].length) { this.tiles[y * WW + x] = T.WATER; this.addW(y * WW + x); }
       }
-      for (let x = 0; x < WW; x++) this.moist[x] = Math.min(1.5, this.moist[x] + W8.rain * this.zoneWet(x) * dt / 300);
+      for (let x = 0; x < WW; x++) this.moist[x] = Math.min(1.5, this.moist[x] + W8.rain * this.zoneWet(x) * this.clim.w * dt / 300);
     } else if (this.temp > 1) this.snow = Math.max(0, this.snow - dt * (this.temp / 4000));
     // marken torkar långsamt, men nära vatten är den fuktig
     if (!this.near || (this.nearT = (this.nearT || 0) + dt) > 10) {
       this.nearT = 0; this.near = new Uint8Array(WW);
       for (const i of this.wlist) { const x = i % WW; for (let k = -5; k <= 5; k++) this.near[wrapT(x + k)] = 1; }
     }
-    const dry = dt / (2 * DAY) * (this.temp > 0 ? 1 + this.temp / 15 : 0.3);
+    const dry = dt / (2 * DAY) * (this.temp > 0 ? 1 + this.temp / 15 : 0.3) * (1.5 - 0.5 * this.clim.w);
     for (let x = 0; x < WW; x++) { const tgt = this.near[x] ? 0.95 : 0.3 * this.zoneWet(x); if (this.moist[x] > tgt) this.moist[x] -= (this.moist[x] - tgt) * dry * 3; else this.moist[x] += (tgt - this.moist[x]) * dt / DAY; }
   }
   // fröbanken: vilande frön i jorden gror där det finns plats, när det är varmt och fuktigt nog
@@ -318,7 +361,7 @@ class World {
       seg: 1 + r.int(3), segL: r.range(6, 11), segH: r.range(5, 9), legs: 1 + r.int(3), legL: r.range(4, 9),
       hue: r.range(0, 360), hue2: r.range(0, 360), pattern: r.int(3), eye: r.range(1.6, 2.8),
       ant: r.next() < 0.5 ? 0 : r.range(3, 8), tail: r.next() < 0.4 ? 0 : r.range(3, 11),
-      hid: 8 + r.int(5), explore: r.range(0.15, 0.3), lr: r.range(0.002, 0.008), maxAge: r.range(15, 25) * DAY, tol: r.range(0, 0.1), carn: r.range(0, 0.08)
+      hid: 8 + r.int(5), explore: r.range(0.15, 0.3), lr: r.range(0.002, 0.008), maxAge: r.range(15, 25) * DAY, tol: r.range(0, 0.1), carn: r.range(0, 0.08), lock: r.next()
     };
   }
   makeBrain(g) {
@@ -671,7 +714,7 @@ class World {
     this.time += DT; this.stepN = (this.stepN || 0) + 1;
     this.wind = Math.sin(this.time * 0.05) * 0.6 + Math.sin(this.time * 0.013) * 0.4;
     this.waterAcc += DT; if (this.waterAcc >= 0.5) { if (this.wpos) this.updateWater(this.waterAcc); this.waterAcc = 0; }
-    this.plantAcc += DT; if (this.plantAcc >= 1) { this.updateWeather(this.plantAcc); this.updatePlants(this.plantAcc); this.sprout(this.plantAcc); this.updateSoil(this.plantAcc); this.decay(this.plantAcc); this.rotItems(this.plantAcc); this.plantAcc = 0; }
+    this.plantAcc += DT; if (this.plantAcc >= 1) { this.updateClimate(this.plantAcc); this.updateDisease(this.plantAcc); this.updateWeather(this.plantAcc); this.updatePlants(this.plantAcc); this.sprout(this.plantAcc); this.updateSoil(this.plantAcc); this.decay(this.plantAcc); this.rotItems(this.plantAcc); this.plantAcc = 0; }
     this.rebuildBins();
     if (this.sounds.length && this.time - this.sounds[0].t > 0.5) this.sounds = this.sounds.filter(sd => this.time - sd.t <= 0.5);
     for (const c of this.creatures) {
@@ -686,8 +729,8 @@ class World {
       const hunger = 1 - clamp(c.energy / 120, 0, 1), cost = (c.energy - e0) - (c.gain - gi);
       c.lastReward = c.gain * (1 + 2 * hunger) + c.drinkR - Math.max(0, c.pain - p0) * 6 + cost * 0.05;
       if (c.energy <= 0) {
-        const cause = this.time - c.attackedT < 2 ? 'eaten' : c.hyd <= 0 ? 'thirst' : c.cold > 5 ? 'cold' : c.sick > 0.3 ? 'poison' : 'hunger';
-        this.die(c, { eaten: `blev uppäten av ${c.attacker}`, thirst: 'har dött av törst', cold: 'har frusit ihjäl', poison: 'har dött efter att ha ätit gift', hunger: 'har somnat in av hunger' }[cause] + `, ${this.fmtAge(c.age)} gammal`, cause);
+        const cause = this.time - c.attackedT < 2 ? 'eaten' : c.hyd <= 0 ? 'thirst' : c.cold > 5 ? 'cold' : c.par && c.par.v > 0.25 ? 'disease' : c.sick > 0.3 ? 'poison' : 'hunger';
+        this.die(c, { eaten: `blev uppäten av ${c.attacker}`, thirst: 'har dött av törst', cold: 'har frusit ihjäl', poison: 'har dött efter att ha ätit gift', disease: 'har dött av sjukdom', hunger: 'har somnat in av hunger' }[cause] + `, ${this.fmtAge(c.age)} gammal`, cause);
       } else if (c.age > c.g.maxAge) this.die(c, `har dött av ålder, ${this.fmtAge(c.age)} gammal`, 'age');
     }
     const [a, b] = this.creatures;
@@ -741,7 +784,8 @@ class World {
       brain: al.length ? Math.round(avg(c => c.br.H) * 10) / 10 : null, body: al.length ? Math.round(avg(c => c.g.segL * c.g.seg) * 10) / 10 : null,
       legs: al.length ? Math.round(avg(c => c.g.legs) * 100) / 100 : null, tol: al.length ? Math.round(avg(c => c.g.tol || 0) * 100) / 100 : null,
       tox: Math.round(this.plants.reduce((a, p) => a + (p.tox || 0), 0) / pl * 100) / 100, gen: this.maxGen,
-      carn: al.length ? Math.round(avg(c => c.g.carn || 0) * 100) / 100 : null, species: this.species.filter(s => s.n >= 3).length, items: this.items.length
+      carn: al.length ? Math.round(avg(c => c.g.carn || 0) * 100) / 100 : null, species: this.species.filter(s => s.n >= 3).length, items: this.items.length,
+      sick: al.length ? Math.round(al.filter(c => c.par).length / al.length * 100) : null, vir: al.some(c => c.par) ? Math.round(avg(c => c.par ? c.par.v : 0) / (al.filter(c => c.par).length / n) * 100) / 100 : null, climT: Math.round(this.clim.t * 10) / 10, climW: Math.round(this.clim.w * 100) / 100
     });
     this.iv = { births: 0, deaths: {}, utt: 0, digs: 0 };
     if (this.hist.length > 1600) this.hist = this.hist.filter((h, i) => i % 2 === 0 || i > this.hist.length - 200);
@@ -826,6 +870,7 @@ class World {
     mutF('explore', 0.08, 0.05, 0.6); mutF('lr', 0.08, 0.0005, 0.03); mutF('maxAge', 0.05, 6 * DAY, 60 * DAY);
     g.tol = clamp((pick('tol') || 0) + r.gauss() * 0.03, 0, 1);
     g.carn = clamp((pick('carn') || 0) + r.gauss() * 0.035, 0, 1);
+    g.lock = ((pick('lock') ?? r.next()) + r.gauss() * 0.02 + 1) % 1; // immunförsvarets 'lås' – sjukdomar måste passa in i det
     mutI('seg', 1, 8); mutI('legs', 0, 10); mutI('pattern', 0, 2); mutI('hid', 3, 64);
     for (const k of ['ant', 'tail']) { g[k] = pick(k); if (g[k] === 0 && r.next() < 0.03) g[k] = r.range(2, 6); else if (g[k] > 0) { g[k] *= Math.exp(r.gauss() * 0.06); if (r.next() < 0.02) g[k] = 0; } }
     for (const k of ['hue', 'hue2']) g[k] = (pick(k) + r.gauss() * 7 + 360) % 360;
@@ -868,6 +913,7 @@ class World {
     const gen = Math.max(a.gen, b.gen) + 1, x = wrapX(a.x + wrapD(b.x - a.x) / 2);
     const ch = this.makeCreature(this.childName(a, b), x, g, br, gen, [a.id, b.id], { size: 0.5, energy: 50, pnames: [a.name, b.name] });
     ch.y = Math.min(a.y, b.y); ch.face = a.face;
+    { const sp = a.par || b.par; if (sp && this.rng.next() < 0.25) this.infect(ch, sp); }
     this.births++; this.aliveCount++; this.iv.births++;
     if (this.births === 1) this.chron(`Det första barnet i dalens historia är fött: ${ch.name}, barn till ${a.name} och ${b.name}.`, ch);
     else if (gen > this.maxGen) this.chron(`Generation ${gen} är född: ${ch.name}, barn till ${a.name} och ${b.name}.`, ch);
@@ -883,11 +929,11 @@ class World {
     const arr = a => Array.from(a, v => Math.round(v * 1e4) / 1e4);
     return {
       v: 3, ww: WW, zoneE: this.zoneE ? Array.from(this.zoneE, v => Math.round(v * 1000) / 1000) : null, seed: this.seed, rng: this.rng.s, time: this.time, nextId: this.nextId, firsts: this.firsts, log: this.log, lastDay: this.lastDay, lake: this.lake,
-      fert: arr(this.fert), dead: this.dead, maxGen: this.maxGen, births: this.births, popHist: this.popHist, lex: this.lex, ctxTot: this.ctxTot, uttTot: this.uttTot, stats: this.stats, moist: arr(this.moist), weather: this.weather, snow: this.snow, water0: this.water0, hist: this.hist, causes: this.causes, items: this.items, species: this.species, nextSp: this.nextSp, founders: this.founders, histAcc: this.histAcc, iv: this.iv,
+      fert: arr(this.fert), dead: this.dead, maxGen: this.maxGen, births: this.births, popHist: this.popHist, lex: this.lex, ctxTot: this.ctxTot, uttTot: this.uttTot, stats: this.stats, moist: arr(this.moist), weather: this.weather, snow: this.snow, water0: this.water0, hist: this.hist, causes: this.causes, items: this.items, species: this.species, nextSp: this.nextSp, founders: this.founders, clim: this.clim, plague: this.plague, histAcc: this.histAcc, iv: this.iv,
       tiles: b64(this.tiles), surface: Array.from(this.surface), plants: this.plants,
       creatures: this.creatures.map(c => ({
         id: c.id, name: c.name, gen: c.gen, parents: c.parents, g: c.g, x: c.x, y: c.y, vx: c.vx, vy: c.vy, face: c.face, energy: c.energy, age: c.age, alive: c.alive,
-        meals: c.meals, rbar: c.rbar, hs: arr(c.hs), size: c.size, born: c.born, kids: c.kids, mateCd: c.mateCd, flesh: c.flesh, diedAt: c.diedAt, pnames: c.pnames, carry: c.carry, carryAmt: c.carryAmt, sp: c.sp, builds: c.builds, spoke: c.spoke, hyd: c.hyd, cause: c.cause, say: c.say,
+        meals: c.meals, rbar: c.rbar, hs: arr(c.hs), size: c.size, born: c.born, kids: c.kids, mateCd: c.mateCd, flesh: c.flesh, diedAt: c.diedAt, pnames: c.pnames, carry: c.carry, carryAmt: c.carryAmt, sp: c.sp, builds: c.builds, spoke: c.spoke, hyd: c.hyd, cause: c.cause, say: c.say, par: c.par || null, immT: c.immT || 0,
         br: { H: c.br.H, wih: arr(c.br.wih), whh: arr(c.br.whh), bh: arr(c.br.bh), who: arr(c.br.who), bo: arr(c.br.bo) },
         br0: { H: c.br0.H, wih: arr(c.br0.wih), whh: arr(c.br0.whh), bh: arr(c.br0.bh), who: arr(c.br0.who), bo: arr(c.br0.bo) }
       }))
@@ -901,7 +947,7 @@ class World {
     if (d.fert) w.fert = Float32Array.from(d.fert); w.dead = d.dead || []; w.maxGen = d.maxGen || 1; w.births = d.births || 0; w.popHist = d.popHist || [];
     w.lex = d.lex || {}; w.ctxTot = d.ctxTot || {}; w.uttTot = d.uttTot || 0; w.stats = d.stats || { digs: 0, builds: 0, gifts: 0 };
     if (d.moist) w.moist = Float32Array.from(d.moist); if (d.weather) w.weather = d.weather; w.snow = d.snow || 0;
-    w.hist = d.hist || []; w.causes = d.causes || {}; w.items = d.items || []; w.species = d.species || []; w.nextSp = d.nextSp || 1; w.founders = d.founders || null; w.histAcc = d.histAcc || 0; if (d.iv) w.iv = d.iv;
+    w.hist = d.hist || []; w.causes = d.causes || {}; w.items = d.items || []; w.species = d.species || []; w.nextSp = d.nextSp || 1; w.founders = d.founders || null; if (d.clim) w.clim = d.clim; else w.clim.next = w.time + 20 * DAY; if (d.plague) w.plague = d.plague; else w.plague.next = w.time + 6 * DAY; w.histAcc = d.histAcc || 0; if (d.iv) w.iv = d.iv;
     const bin = atob(d.tiles); for (let i = 0; i < bin.length; i++) w.tiles[i] = bin.charCodeAt(i);
     w.surface = Int16Array.from(d.surface);
     w.plants = d.plants; w.plantAt = new Array(WW).fill(null); for (const p of w.plants) w.plantAt[p.x] = p;
@@ -920,7 +966,8 @@ class World {
       const c = w.makeCreature(s.name, s.x, s.g, br, s.gen, s.parents, { size: s.size || 1, br0, pnames: s.pnames });
       w.nextId = nid;
       Object.assign(c, { id: s.id, y: s.y, vx: s.vx, vy: s.vy, face: s.face, energy: s.energy, age: s.age, alive: s.alive, meals: s.meals, rbar: s.rbar, hs: F(s.hs),
-        born: s.born || 0, kids: s.kids || 0, mateCd: s.mateCd || 0, flesh: s.flesh || 0, diedAt: s.diedAt || 0, carry: s.carry || 0, builds: s.builds || 0, spoke: s.spoke || 0, hyd: s.hyd === undefined ? 90 : s.hyd, cause: s.cause, say: s.say || null, carryAmt: s.carryAmt || 0, sp: s.sp || 0 });
+        born: s.born || 0, kids: s.kids || 0, mateCd: s.mateCd || 0, flesh: s.flesh || 0, diedAt: s.diedAt || 0, carry: s.carry || 0, builds: s.builds || 0, spoke: s.spoke || 0, hyd: s.hyd === undefined ? 90 : s.hyd, cause: s.cause, say: s.say || null, carryAmt: s.carryAmt || 0, sp: s.sp || 0, par: s.par || null, immT: s.immT || 0 });
+      if (c.g.lock === undefined) c.g.lock = hash2(c.id, 7);
     }
     w.initWater(); if (d.water0) w.water0 = d.water0; w.temp = w.calcTemp(); w.rebuildBins(); w.terrainVersion++;
     return w;
