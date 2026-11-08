@@ -23,7 +23,8 @@ const IN_LABELS = [
   'rör en växt', 'står på mark', 'vägg framför', 'energi', 'smärta', 'ljus',
   'hör framifrån', 'hör bakifrån', 'blicken', 'hörd tonhöjd', 'rör en varelse', 'är ung',
   'törst', 'rör vatten', 'kyla',
-  'syn 1 djur', 'syn 2 djur', 'syn 3 djur', 'syn 4 djur', 'syn 5 djur'
+  'syn 1 djur', 'syn 2 djur', 'syn 3 djur', 'syn 4 djur', 'syn 5 djur',
+  'solens höjd', 'årstiden', 'lukt av växter framför', 'lukt av växter bakom', 'lukt av kött framför', 'lukt av kött bakom', 'rör en släkting'
 ];
 const OUT_LABELS = ['gå', 'hoppa', 'ät', 'greppa', 'gräv', 'röst', 'tonhöjd', 'para', 'ge'];
 const VOX = ['mu', 'mo', 'ma', 'na', 'ne', 'ni', 'ki', 'ti']; // låg ton → hög ton, så att ljuden kan skrivas som text
@@ -534,7 +535,7 @@ class World {
     // Dyra handlingar börjar som ovanliga (en medfödd återhållsamhet) – evolutionen kan ändra det.
     bo[3] -= 1.2; bo[4] -= 1.5; bo[5] -= 0.6; bo[8] -= 1.2;
     const wih = f(H * NI, 0.5);
-    for (let j = 0; j < H; j++) for (const i of [21, 22, 24, 25, 26, 27, 28, 29]) wih[j * NI + i] *= 0.3; // nya sinnen börjar som svaga signaler
+    for (let j = 0; j < H; j++) for (let i = 21; i < NI; i++) if (i !== 23) wih[j * NI + i] *= i >= 35 ? 0 : 0.3; // de nyaste sinnena börjar tysta – evolutionen får koppla in dem // nya sinnen börjar som svaga signaler
     return { H, wih, whh: f(H * H, 0.2), bh: f(H, 0.1), who: f(NO * H, 0.5), bo };
   }
   bodySize(g) { const L = g.segL * (0.75 * (g.seg - 1) + 1.2); return { w: L * 0.8, h: g.segH + g.legL * 0.85, L }; }
@@ -653,6 +654,22 @@ class World {
     }
     inp[21] = fr; inp[22] = bk; inp[24] = pitch; inp[25] = c.touchO ? 1 : 0; inp[26] = c.size < 1 ? 1 : 0;
     inp[27] = 1 - clamp(c.hyd / 100, 0, 1); inp[28] = c.touchW; inp[29] = clamp(c.cold / 15, 0, 1);
+    // tid: dygnet och året – gör det möjligt att förbereda sig
+    inp[35] = this.sunHeight(); inp[36] = Math.sin(this.yearFrac() * 2 * Math.PI);
+    // lukt: mat som finns utom synhåll, framför eller bakom
+    if (((this.stepN + c.id) & 7) === 0) {
+      const col = wrapT(Math.floor(c.x / TS)); let pf = 0, pb = 0, mf = 0, mb = 0;
+      for (let k = -24; k <= 24; k++) {
+        const t = wrapT(col + k), w = Math.exp(-Math.abs(k) / 9), front = Math.sign(k) === c.face;
+        const p = this.plantAt[t]; if (p && p.b > 1 && p.h <= 2.2) { if (front) pf += p.b * w; else pb += p.b * w; }
+        for (const b of this.bbins[t]) { const m = (b.alive ? 20 : b.flesh) * w; if (front) mf += m; else mb += m; }
+        for (const o of this.bins[t]) if (o !== c && o.size < 1) { if (front) mf += 8 * w; else mb += 8 * w; }
+      }
+      for (const d of this.corpses) { const k = Math.round(wrapD(d.x - c.x) / TS); if (Math.abs(k) > 24 || !d.flesh) continue; const m = d.flesh * Math.exp(-Math.abs(k) / 9); if (Math.sign(k) === c.face) mf += m; else mb += m; }
+      inp[37] = clamp(pf / 60, 0, 1); inp[38] = clamp(pb / 60, 0, 1); inp[39] = clamp(mf / 40, 0, 1); inp[40] = clamp(mb / 40, 0, 1);
+    }
+    // släkt: föräldrar, barn och syskon
+    const o = c.touchO; inp[41] = o && ((c.parents && (c.parents.includes(o.id) || (o.parents && o.parents.some(p => c.parents.includes(p))))) || (o.parents && o.parents.includes(c.id))) ? 1 : 0;
   }
   sawOther(c) { const o = this.creatures.find(z => z.id === c.seenId); if (o && o.gen === 1) this.first('saw' + c.id, `${c.name} får syn på ${o.name} för första gången.`, c); }
 
@@ -864,7 +881,7 @@ class World {
       }
     }
     // ämnesomsättning: allt kostar
-    const metab = 0.02 + 0.0015 * c.w + 0.0004 * c.br.H + Math.abs(c.vx) * 0.0006 * (1 + g.legL / 25) + (c.size < 1 ? 0.02 : 0) + (c.carry ? 0.01 : 0) + c.cold * 0.0025 + (c.g.tol || 0) * 0.01 + c.g.legs * 0.0008;
+    const metab = 0.02 + 0.0015 * c.w + 0.0011 * Math.sqrt(c.br.H) + Math.abs(c.vx) * 0.0006 * (1 + g.legL / 25) + (c.size < 1 ? 0.02 : 0) + (c.carry ? 0.01 : 0) + c.cold * 0.0025 + (c.g.tol || 0) * 0.01 + c.g.legs * 0.0008;
     c.energy -= metab * dt;
     c.pain *= 1 - dt * 0.8;
     c.walk += Math.abs(c.vx) * dt * 0.28;
@@ -1058,7 +1075,22 @@ class World {
     return g;
   }
   resizeBrain(br, H2) {
-    const H = br.H, r = this.rng;
+    const r = this.rng;
+    // hjärnan växer genom att en neuron kopieras (som när gener dupliceras i verkligheten): kopian gör först samma sak,
+    // så att växa kostar ingenting i förmåga – sedan kan kopian och originalet glida isär och lära sig olika saker
+    while (br.H < H2) {
+      const H = br.H, n = H + 1, j = r.int(H), wih = new Float32Array(n * NI), whh = new Float32Array(n * n), bh = new Float32Array(n), who = new Float32Array(NO * n);
+      for (let a = 0; a < n; a++) {
+        const sa = a < H ? a : j;
+        for (let i = 0; i < NI; i++) wih[a * NI + i] = br.wih[sa * NI + i] + (a === H ? r.gauss() * 0.02 : 0);
+        for (let b = 0; b < n; b++) { const sb = b < H ? b : j; let v = br.whh[sa * H + sb]; if (b === j || b === H) v *= 0.5; whh[a * n + b] = v; }
+        bh[a] = br.bh[sa];
+      }
+      for (let m = 0; m < NO; m++) for (let b = 0; b < n; b++) { const sb = b < H ? b : j; let v = br.who[m * H + sb]; if (b === j || b === H) v *= 0.5; who[m * n + b] = v; }
+      br = { H: n, wih, whh, bh, who, bo: Float32Array.from(br.bo) };
+    }
+    if (br.H === H2) return br;
+    const H = br.H;
     const wih = new Float32Array(H2 * NI), whh = new Float32Array(H2 * H2), bh = new Float32Array(H2), who = new Float32Array(NO * H2);
     for (let j = 0; j < H2; j++) {
       for (let i = 0; i < NI; i++) wih[j * NI + i] = j < H ? br.wih[j * NI + i] : r.gauss() * 0.15;
