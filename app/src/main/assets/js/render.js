@@ -106,6 +106,7 @@ class Renderer {
     botC = mix(botC, [240, 140, 90], dusk * 0.7); topC = mix(topC, [90, 70, 130], dusk * 0.4);
     const rain = world.weather ? world.weather.rain : 0;
     if (rain > 0) { const grey = mix([30, 32, 40], [120, 128, 140], L); topC = mix(topC, grey, rain * 0.75); botC = mix(botC, grey, rain * 0.6); }
+    const dust = world.cosmos ? world.cosmos.dust : 0; if (dust > 0) { topC = mix(topC, [70, 58, 48], dust * 0.7); botC = mix(botC, [120, 95, 70], dust * 0.7); }
     const gr = g.createLinearGradient(0, 0, 0, H);
     gr.addColorStop(0, `rgb(${topC})`); gr.addColorStop(1, `rgb(${botC})`);
     g.fillStyle = gr; g.fillRect(0, 0, W, H);
@@ -115,10 +116,48 @@ class Renderer {
       const a = night * (0.5 + 0.5 * Math.sin(world.time * 0.7 + s.p));
       g.fillStyle = `rgba(255,255,240,${a})`; g.fillRect(((s.x * W * 1.3 - this.cam.x * 0.02) % W + W) % W, s.y * H, s.s, s.s);
     }
+    const C = world.cosmos, T0 = world.time;
+    if (C) {
+      // norrsken
+      const aur = Math.max(C.storm, world.solar() > 0.75 && world.season && world.season() === 'Vinter' ? 0.25 : 0) * night;
+      if (aur > 0.03) for (let band = 0; band < 3; band++) {
+        g.fillStyle = band === 1 ? `rgba(190,110,255,${aur * 0.18})` : `rgba(90,255,170,${aur * 0.22})`;
+        g.beginPath(); g.moveTo(0, H * 0.05);
+        for (let x = 0; x <= W; x += 12) g.lineTo(x, H * (0.12 + band * 0.05) + Math.sin(x * 0.012 + T0 * 0.02 + band * 2) * 22 + Math.sin(x * 0.031 - T0 * 0.035) * 10);
+        for (let x = W; x >= 0; x -= 12) g.lineTo(x, H * (0.02 + band * 0.04) + Math.sin(x * 0.01 + T0 * 0.015 + band) * 14);
+        g.fill();
+      }
+      // komet
+      if (C.comet && night > 0.1) {
+        const k = C.comet, prog = (T0 - k.t0) / (k.t1 - k.t0), cx = (k.x + prog * 0.15) * W, cy = k.y * H, fade = Math.min(1, Math.min(prog, 1 - prog) * 6) * night;
+        const tx = cx - Math.cos(k.ang) * k.len, ty = cy - Math.sin(k.ang) * k.len * 0.4 - k.len * 0.3;
+        const tg = g.createLinearGradient(cx, cy, tx, ty); tg.addColorStop(0, `rgba(220,240,255,${0.8 * fade})`); tg.addColorStop(1, 'rgba(160,200,255,0)');
+        g.strokeStyle = tg; g.lineWidth = 5; g.lineCap = 'round'; g.beginPath(); g.moveTo(cx, cy); g.lineTo(tx, ty); g.stroke(); g.lineWidth = 1; g.lineCap = 'butt';
+        g.fillStyle = `rgba(255,255,255,${fade})`; g.beginPath(); g.arc(cx, cy, 2.6, 0, 6.283); g.fill();
+      }
+      // supernova
+      if (C.nova) {
+        const n = C.nova, prog = (T0 - n.t0) / (n.t1 - n.t0), br = Math.max(0, 1 - prog) * (0.4 + 0.6 * night), x = n.x * W, y = n.y * H, r = 3 + 6 * br;
+        const ng = g.createRadialGradient(x, y, 0, x, y, r * 4); ng.addColorStop(0, `rgba(255,250,235,${br})`); ng.addColorStop(1, 'rgba(255,200,200,0)');
+        g.fillStyle = ng; g.beginPath(); g.arc(x, y, r * 4, 0, 6.283); g.fill();
+        g.strokeStyle = `rgba(255,255,255,${br * 0.8})`; g.beginPath(); g.moveTo(x - r * 3, y); g.lineTo(x + r * 3, y); g.moveTo(x, y - r * 3); g.lineTo(x, y + r * 3); g.stroke();
+      }
+      // stjärnfall: varje år i slutet av sommaren, och då och då annars
+      const yf = world.yearFrac(), shower = (yf > 0.55 && yf < 0.6 ? 1 : 0.08) * night;
+      if (shower > 0.05) for (let k = 0; k < 4; k++) {
+        const slot = Math.floor(T0 / 2.3) * 4 + k, ph = (T0 / 2.3) % 1;
+        if (hash2(slot, 9) > shower * 0.6) continue;
+        const x0 = hash2(slot, 1) * W, y0 = hash2(slot, 2) * H * 0.4, len = 30 + hash2(slot, 3) * 60, a = 1 - ph;
+        g.strokeStyle = `rgba(255,255,240,${a * 0.9})`; g.beginPath(); g.moveTo(x0 + ph * len, y0 + ph * len * 0.5); g.lineTo(x0 + ph * len - 18, y0 + ph * len * 0.5 - 9); g.stroke();
+      }
+    }
     // sol och måne längs en båge
     const f = world.dayFrac(), ang = (f - 0.25) * 2 * Math.PI;
     const sx = W / 2 - Math.cos(ang) * W * 0.45, sy = H * 0.62 - Math.sin(ang) * H * 0.55;
-    if (sh > -0.25) { const glow = g.createRadialGradient(sx, sy, 2, sx, sy, 60); glow.addColorStop(0, 'rgba(255,240,200,0.9)'); glow.addColorStop(0.25, 'rgba(255,215,150,0.35)'); glow.addColorStop(1, 'rgba(255,200,120,0)'); g.fillStyle = glow; g.beginPath(); g.arc(sx, sy, 60, 0, 6.283); g.fill(); g.fillStyle = '#fff4d8'; g.beginPath(); g.arc(sx, sy, 11, 0, 6.283); g.fill(); }
+    if (sh > -0.25) { const glow = g.createRadialGradient(sx, sy, 2, sx, sy, 60); glow.addColorStop(0, 'rgba(255,240,200,0.9)'); glow.addColorStop(0.25, 'rgba(255,215,150,0.35)'); glow.addColorStop(1, 'rgba(255,200,120,0)'); g.fillStyle = glow; g.beginPath(); g.arc(sx, sy, 60, 0, 6.283); g.fill(); g.fillStyle = '#fff4d8'; g.beginPath(); g.arc(sx, sy, 11, 0, 6.283); g.fill();
+      const E = C && C.ecl; if (E && T0 > E.t0 && T0 < E.t1) { const p = (T0 - E.t0) / (E.t1 - E.t0), off = (p * 2 - 1) * 24, tot = 1 - Math.abs(p * 2 - 1);
+        if (tot > 0.75) { g.strokeStyle = `rgba(255,250,230,${(tot - 0.75) * 3})`; g.lineWidth = 2; g.beginPath(); g.arc(sx, sy, 14, 0, 6.283); g.stroke(); g.lineWidth = 1; }
+        g.fillStyle = `rgb(${topC})`; g.beginPath(); g.arc(sx + off, sy, 11.5, 0, 6.283); g.fill(); } }
     const mx = W - sx, my = H * 0.62 + Math.sin(ang) * H * 0.55 - H * 0.2;
     if (sh < 0.25) { g.fillStyle = 'rgba(235,235,255,0.85)'; g.beginPath(); g.arc(mx, my, 8, 0, 6.283); g.fill(); g.fillStyle = `rgb(${topC})`; g.beginPath(); g.arc(mx + 3.5, my - 2, 7, 0, 6.283); g.fill(); }
     // moln
@@ -168,6 +207,7 @@ class Renderer {
       }
       this.plants(world, g, t);
       this.items(world, g);
+      this.impactFx(world, g);
       g.restore();
     }
     // djuren
@@ -334,6 +374,21 @@ class Renderer {
     if (c.eating > 0.9 && Math.random() < 0.3) this.particles.push({ x: c.x + c.face * (c.w / 2 + 3), y: c.y - 4, vx: (Math.random() - 0.5) * 20, vy: -20 - Math.random() * 20, life: 0.6, h: 110, s: 1 });
     if (c.grounded && c.prevAir && Math.abs(c.prevVy || 0) > 80) for (let i = 0; i < 4; i++) this.particles.push({ x: c.x + (Math.random() - 0.5) * c.w, y: c.y - 1, vx: (Math.random() - 0.5) * 30, vy: -10 - Math.random() * 15, life: 0.5, h: 30, s: 1 });
     c.prevAir = !c.grounded; c.prevVy = c.vy;
+  }
+  impactFx(world, g) {
+    const C = world.cosmos; if (!C || !C.lastImpact) return;
+    const L = C.lastImpact, now = performance.now();
+    if (this.seenImpact !== L.id) { if (this.seenImpact !== undefined && world.time - L.t < 60) this.fx = { start: now, ...L }; this.seenImpact = L.id; }
+    const f = this.fx; if (!f) return;
+    const age = (now - f.start) / 1000; if (age > 2.6) { this.fx = null; return; }
+    const sz = 3 + f.S * 2;
+    if (age < 0.7) { const p = age / 0.7, hx = f.x - 260 * (1 - p), hy = f.y - 420 * (1 - p);
+      const tg = g.createLinearGradient(hx, hy, hx - 90, hy - 145); tg.addColorStop(0, 'rgba(255,220,140,0.95)'); tg.addColorStop(1, 'rgba(255,120,40,0)');
+      g.strokeStyle = tg; g.lineWidth = sz; g.lineCap = 'round'; g.beginPath(); g.moveTo(hx, hy); g.lineTo(hx - 90, hy - 145); g.stroke(); g.lineCap = 'butt'; g.lineWidth = 1;
+      g.fillStyle = '#fff6d0'; g.beginPath(); g.arc(hx, hy, sz * 0.6, 0, 6.283); g.fill();
+    } else { const p = (age - 0.7) / 1.9, rr = sz * 4 + p * sz * 22;
+      const fg = g.createRadialGradient(f.x, f.y, 0, f.x, f.y, rr); fg.addColorStop(0, `rgba(255,240,200,${(1 - p) * 0.95})`); fg.addColorStop(0.4, `rgba(255,140,60,${(1 - p) * 0.6})`); fg.addColorStop(1, 'rgba(255,100,40,0)');
+      g.fillStyle = fg; g.beginPath(); g.arc(f.x, f.y, rr, 0, 6.283); g.fill(); }
   }
   beast(b, x, y, g, t) {
     const G = b.g, sz = G.size, f = b.face, big = b.kind === 'big';

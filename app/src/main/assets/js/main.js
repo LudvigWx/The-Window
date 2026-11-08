@@ -317,7 +317,7 @@ function playVoices() {
 try { if (localStorage.getItem('thewindow-sound') === '1') setSound(true); } catch (e) { }
 
 // ---------- historia: grafer ----------
-const CAUSE_SV = { hunger: 'hunger', thirst: 'törst', cold: 'kyla', age: 'ålder', poison: 'gift', disease: 'sjukdom', kicked: 'uroxe', eaten: 'rovdjur', other: 'okänt' };
+const CAUSE_SV = { hunger: 'hunger', thirst: 'törst', cold: 'kyla', age: 'ålder', poison: 'gift', disease: 'sjukdom', meteor: 'meteorit', kicked: 'uroxe', eaten: 'rovdjur', other: 'okänt' };
 let histTab = 'pop', kinTick = 0;
 document.querySelectorAll('#histTabs button').forEach(b => b.onclick = () => { histTab = b.dataset.t; document.querySelectorAll('#histTabs button').forEach(x => x.classList.toggle('on', x === b)); renderHist(); });
 $('#histClose').onclick = () => $('#histP').classList.add('hidden');
@@ -367,6 +367,9 @@ function renderHist() {
   } else if (histTab === 'env') {
     add('Mat i dalen (växternas samlade massa)', 'c1', [{ n: 'mat', c: '#7fd1a0', f: p => p.food, w: 2.2 }], {}, 'Om maten rasar när befolkningen växer har de ätit ur dalen.');
     add('Växterna: höjd, antal träd och frukt', 'c5', [{ n: 'höjd × 10', c: '#7fd1a0', f: p => p.treeH == null ? null : p.treeH * 10 }, { n: 'träd', c: '#c98b5b', f: p => p.trees ?? null }, { n: 'frukt × 100', c: '#f2788c', f: p => p.fr == null ? null : p.fr * 100 }], { min: 0 }, 'Växter som blir högre än grannarna skuggar dem. Höga växter blir träd, och frukten som faller sprider frön.');
+    { const C = world.cosmos, ev = C ? C.log.filter(e => e.type !== 'dust').slice(-12).reverse() : [];
+      const ic = { impact: '☄️', eclipse: '🌑', comet: '💫', nova: '🌟', storm: '🌌' };
+      html += `<div class="ctitle">Händelser från universum</div><p style="color:var(--dim);font-size:12px;margin-top:-4px">Meteoriter följer en potenslag: många små, få stora. ${C ? `${C.impacts} nedslag hittills. Solens aktivitet just nu: ${Math.round(world.solar() * 100)} %.` : ''}${C && C.dust > 0.02 ? ` Damm i luften: ${Math.round(C.dust * 100)} %.` : ''}</p>` + (ev.length ? ev.map(e => `<div style="font-size:13px;margin:4px 0"><em style="color:var(--dim)">${fmtT(e.t)}</em> ${ic[e.type] || '✨'} ${esc(e.msg)}</div>`).join('') : '<p style="color:var(--dim)">Inget har hänt än – himlen är lugn.</p>'); }
     add('Vatten ovan jord (rutor)', 'c2', [{ n: 'vatten', c: '#6fa8ff', f: p => p.water }]);
     add('Klimatet: hur mycket varmare/kallare och blötare än vanligt', 'c4', [{ n: '°C jämfört med vanligt', c: '#f2788c', f: p => p.climT ?? null }, { n: 'regn × 10 (10 = vanligt)', c: '#6fa8ff', f: p => p.climW == null ? null : p.climW * 10 }], {}, 'Klimatet driver långsamt mellan istider, torka och blöta perioder.');
     add('Temperatur', 'c3', [{ n: '°C', c: '#f2b76b', f: p => p.temp }], { min: Math.min(-5, ...H.map(h => h.temp)) });

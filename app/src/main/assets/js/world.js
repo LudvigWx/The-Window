@@ -84,7 +84,7 @@ class World {
     this.hist = []; this.histAcc = 0; this.causes = {}; this.iv = { births: 0, deaths: {}, utt: 0, digs: 0 }; this.founders = null;
     this.moist = new Float32Array(WW).fill(0.6); this.weather = { rain: 0, until: 0, next: 0.3 * DAY }; this.snow = 0; this.temp = 12; this.waterAcc = 0;
     this.clim = { t: 0, w: 1, tT: 0, wT: 1, next: 60 * DAY, name: 'vanligt' };
-    this.beasts = []; this.bbins = Array.from({ length: WW }, () => []); this.bAcc = 0; this.nextBeastId = 1; this.imm = { small: 3 * DAY, big: 8 * DAY }; this.plague = { next: 12 * DAY, n: 0 };
+    this.initCosmos(0); this.beasts = []; this.bbins = Array.from({ length: WW }, () => []); this.bAcc = 0; this.nextBeastId = 1; this.imm = { small: 3 * DAY, big: 8 * DAY }; this.plague = { next: 12 * DAY, n: 0 };
     this.wpos = null; this.wlist = [];
     this.sounds = []; this.lex = {}; this.ctxTot = {}; this.uttTot = 0; this.dirty = []; this.stats = { digs: 0, builds: 0, gifts: 0 };
     if (names) { this.generate(); this.initWater(); this.seedPlants(); this.spawnFounders(names); }
@@ -95,10 +95,11 @@ class World {
   dayNumber() { return Math.floor((this.time / DAY) + 0.25) + 1; }
   clock() { const m = Math.floor(this.dayFrac() * 1440); return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
   sunHeight() { return -Math.cos(this.dayFrac() * 2 * Math.PI); }
-  daylight() { return clamp(this.sunHeight() * 1.6 + 0.35, 0.06, 1); }
+  daylight() { return clamp(this.sunHeight() * 1.6 + 0.35, 0.06, 1) * (1 - this.dimming()); }
+  dimming() { const C = this.cosmos; if (!C) return 0; let d = (C.dust || 0) * 0.4; if (C.ecl && this.time > C.ecl.t0 && this.time < C.ecl.t1) { const m = 1 - Math.abs((this.time - C.ecl.t0) / (C.ecl.t1 - C.ecl.t0) * 2 - 1); d = Math.max(d, Math.min(0.92, m * 1.3)); } return d; }
   yearFrac() { return (this.time / YEAR) % 1; } // 0 = vårens mitt, 0.25 = sommar, 0.5 = höst, 0.75 = vinter
   season() { return ['Vår', 'Sommar', 'Höst', 'Vinter'][Math.floor(((this.yearFrac() + 0.125) % 1) * 4)]; }
-  calcTemp() { return 11 + (this.clim ? this.clim.t : 0) + 10 * Math.sin(this.yearFrac() * 2 * Math.PI) + (this.daylight() - 0.5) * 6 - this.weather.rain * 3; }
+  calcTemp() { return 11 + (this.clim ? this.clim.t : 0) - (this.cosmos ? this.cosmos.dust * 5 : 0) + 10 * Math.sin(this.yearFrac() * 2 * Math.PI) + (this.daylight() - 0.5) * 6 - this.weather.rain * 3; }
   zoneT(x) { return this.zoneE ? -this.zoneE[x] * 6 : 0; }                    // berg kallare, lågland varmare
   zoneWet(x) { return this.zoneE ? 0.45 + 0.75 * Math.abs(this.zoneE[x]) : 1; } // slätten är torrast
   zoneName(x) { const e = this.zoneE ? this.zoneE[wrapT(x)] : 0; return e > 0.35 ? 'Bergen' : e < -0.35 ? 'Låglandet' : 'Slätten'; }
@@ -365,6 +366,66 @@ class World {
     }
   }
   carrySeed(x, seed) { const tx = wrapT(Math.floor(wrapX(x) / TS)); if (this.isGrowable(tx) && !this.plantAt[tx] && this.plants.length < 320 * WW / 240) { const np = this.newPlant(tx, seed); np.b = 1; } }
+  // ---------- universum: händelser vars storlek följer en potenslag och vars tid är slumpmässig (Poisson) ----------
+  initCosmos(t0) {
+    const r = this.rng;
+    this.cosmos = { dust: 0, ecl: null, comet: null, nova: null, storm: 0, impacts: 0, lastImpact: null, log: [],
+      next: { impact: t0 + r.range(15, 60) * DAY, eclipse: t0 + r.range(30, 120) * DAY, comet: t0 + r.range(40, 200) * DAY, nova: t0 + r.range(600, 2500) * DAY, storm: t0 + r.range(10, 40) * DAY } };
+  }
+  mutBoost() { const N = this.cosmos && this.cosmos.nova; return N && this.time < N.mutEnd ? 2.5 : 1; }
+  solar() { return 0.5 + 0.5 * Math.sin(this.time / (11 * YEAR) * 2 * Math.PI); } // solens elvaårscykel
+  cosmicLog(type, msg, extra) { const C = this.cosmos; C.log.push({ t: this.time, type, msg, ...extra }); if (C.log.length > 80) C.log.shift(); this.chron(msg); }
+  updateCosmos(dt) {
+    const C = this.cosmos, r = this.rng, N = C.next, t = this.time;
+    // dammet efter ett stort nedslag sjunker långsamt undan
+    if (C.dust > 0) { C.dust = Math.max(0, C.dust - dt / (25 * DAY)); if (C.dust === 0) this.cosmicLog('dust', 'Dammet efter nedslaget har äntligen lagt sig. Solen lyser som vanligt igen.'); }
+    C.storm = Math.max(0, C.storm - dt / (1.5 * DAY));
+    // meteoriter: storlek S = u^(-1/α), α = 1,3 – många små, få stora
+    if (t > N.impact) { const S = Math.min(20, Math.pow(1 - r.next() * 0.999, -1 / 1.3)); this.impact(S); N.impact = t - Math.log(1 - r.next()) * 60 * DAY; }
+    // solförmörkelse: läggs mitt på dagen
+    if (t > N.eclipse && !C.ecl) { const mid = Math.floor(t / DAY) * DAY + DAY * 0.25 + (t % DAY > DAY * 0.2 ? DAY : 0); C.ecl = { t0: mid - DAY * 0.03, t1: mid + DAY * 0.03 }; N.eclipse = mid + r.range(90, 220) * DAY; }
+    if (C.ecl && t > C.ecl.t0 && !C.ecl.told) { C.ecl.told = 1; this.cosmicLog('eclipse', 'Solförmörkelse! Månen glider framför solen och mitt på dagen blir det nästan mörkt.'); }
+    if (C.ecl && t > C.ecl.t1) C.ecl = null;
+    // komet
+    if (t > N.comet) { C.comet = { t0: t, t1: t + r.range(8, 16) * DAY, x: r.range(0.15, 0.85), y: r.range(0.12, 0.35), ang: r.range(-0.5, 0.5), len: r.range(60, 160) }; N.comet = t + r.range(150, 380) * DAY; this.cosmicLog('comet', 'En komet syns på natthimlen, med en lång lysande svans.'); }
+    if (C.comet && t > C.comet.t1) C.comet = null;
+    // supernova: en ny stjärna, och kosmisk strålning som ger fler mutationer ett tag
+    if (t > N.nova) { C.nova = { t0: t, t1: t + 45 * DAY, mutEnd: t + 25 * DAY, x: r.range(0.1, 0.9), y: r.range(0.08, 0.4) }; N.nova = t + r.range(1500, 4000) * DAY; this.cosmicLog('nova', 'En ny stjärna tänds plötsligt på himlen – en stjärna långt bort har exploderat. Strålningen gör att barn som föds nu får fler mutationer.'); }
+    if (C.nova && t > C.nova.t1) C.nova = null;
+    // solstormar och norrsken, vanligast när solen är som mest aktiv
+    if (t > N.storm) { C.storm = r.range(0.5, 1); N.storm = t - Math.log(1 - r.next()) * 35 * DAY * (1.6 - this.solar()); this.firstAny('aurora', 'En solstorm träffar dalen. Natthimlen fylls av gröna och lila norrsken.'); if (C.storm > 0.9) this.cosmicLog('storm', 'En kraftig solstorm – starka norrsken dansar över himlen i natt.'); }
+  }
+  impact(S) {
+    const C = this.cosmos, r = this.rng, x = r.next() * WPX, tx = wrapT(Math.floor(x / TS)), ty = this.surface[tx];
+    const rad = 0.6 + S * 0.55, blast = rad * TS * 1.6, shock = blast * 3;
+    C.impacts++; C.lastImpact = { id: C.impacts, x, y: ty * TS, S, t: this.time };
+    if (S < 1.6) { this.firstAny('meteor', 'En liten meteorit slår ner i dalen. Marken skakar till.'); C.log.push({ t: this.time, type: 'impact', S, msg: 'liten meteorit' }); }
+    // kratern
+    const R = Math.ceil(rad);
+    for (let dx = -R; dx <= R; dx++) for (let dy = -R; dy <= R; dy++) {
+      if (dx * dx + dy * dy > rad * rad) continue;
+      const cx = wrapT(tx + dx), cy = ty + dy; if (cy < 0 || cy >= WH - 1) continue;
+      const i = cy * WW + cx; if (this.tiles[i] === T.AIR) continue;
+      if (this.tiles[i] === T.WATER) this.remW(i);
+      this.setTileLive(cx, cy, T.AIR);
+    }
+    for (let dx = -R - 1; dx <= R + 1; dx++) { const cx = wrapT(tx + dx), p = this.plantAt[cx]; if (p) { this.plants.splice(this.plants.indexOf(p), 1); this.plantAt[cx] = null; } }
+    this.fertilize(x, S * 0.8); this.terrainVersion++;
+    // de som står för nära
+    let dead = 0;
+    for (const c of this.creatures) {
+      if (!c.alive) continue; const d = Math.hypot(wrapD(c.x - x), c.y - ty * TS);
+      if (d < blast) { this.die(c, `träffades av en meteorit, ${this.fmtAge(c.age)} gammal`, 'meteor'); dead++; }
+      else if (d < shock) { c.pain = 1; c.energy -= 15 * (1 - d / shock) * S / 4; }
+    }
+    for (const b of this.beasts) if (b.alive && Math.hypot(wrapD(b.x - x), b.y - ty * TS) < blast) this.beastDie(b, 'meteor');
+    if (S >= 1.6) {
+      const big = S >= 6;
+      if (big) C.dust = Math.min(1, C.dust + (S - 5) / 14);
+      this.cosmicLog('impact', big ? `Ett enormt meteoritnedslag! Ett eldklot slår ner och lämnar en krater ${Math.round(rad * 2)} rutor bred.${dead ? ` ${dead} dog direkt.` : ''} Damm fyller himlen – det blir mörkare och kallare i veckor.`
+        : `En meteorit slår ner och lämnar en krater.${dead ? ` ${dead} som stod för nära dog.` : ''}`, { S });
+    }
+  }
   updateClimate(dt) {
     const C = this.clim, r = this.rng, k = dt / (12 * DAY);
     C.t += (C.tT - C.t) * k; C.w += (C.wT - C.w) * k;
@@ -828,7 +889,7 @@ class World {
     this.time += DT; this.stepN = (this.stepN || 0) + 1;
     this.wind = Math.sin(this.time * 0.05) * 0.6 + Math.sin(this.time * 0.013) * 0.4;
     this.waterAcc += DT; if (this.waterAcc >= 0.5) { if (this.wpos) this.updateWater(this.waterAcc); this.waterAcc = 0; }
-    this.plantAcc += DT; if (this.plantAcc >= 1) { this.updateClimate(this.plantAcc); this.updateDisease(this.plantAcc); this.updateWeather(this.plantAcc); this.updatePlants(this.plantAcc); this.sprout(this.plantAcc); this.updateSoil(this.plantAcc); this.decay(this.plantAcc); this.rotItems(this.plantAcc); this.plantAcc = 0; }
+    this.plantAcc += DT; if (this.plantAcc >= 1) { this.updateCosmos(this.plantAcc); this.updateClimate(this.plantAcc); this.updateDisease(this.plantAcc); this.updateWeather(this.plantAcc); this.updatePlants(this.plantAcc); this.sprout(this.plantAcc); this.updateSoil(this.plantAcc); this.decay(this.plantAcc); this.rotItems(this.plantAcc); this.plantAcc = 0; }
     this.rebuildBins(); this.rebuildBeastBins();
     this.bAcc += DT; if (this.bAcc >= 0.1) { this.updateBeasts(this.bAcc); this.bAcc = 0; }
     if (this.sounds.length && this.time - this.sounds[0].t > 0.5) this.sounds = this.sounds.filter(sd => this.time - sd.t <= 0.5);
@@ -845,7 +906,7 @@ class World {
       c.lastReward = c.gain * (1 + 2 * hunger) + c.drinkR - Math.max(0, c.pain - p0) * 6 + cost * 0.05;
       if (c.energy <= 0) {
         const cause = this.time - (c.kickedT || -99) < 2 ? 'kicked' : this.time - c.attackedT < 2 ? 'eaten' : c.hyd <= 0 ? 'thirst' : c.cold > 5 ? 'cold' : c.par && c.par.v > 0.25 ? 'disease' : c.sick > 0.3 ? 'poison' : 'hunger';
-        this.die(c, { eaten: `blev uppäten av ${c.attacker}`, thirst: 'har dött av törst', cold: 'har frusit ihjäl', poison: 'har dött efter att ha ätit gift', disease: 'har dött av sjukdom', kicked: 'blev nedsparkad av en uroxe', hunger: 'har somnat in av hunger' }[cause] + `, ${this.fmtAge(c.age)} gammal`, cause);
+        this.die(c, { eaten: `blev uppäten av ${c.attacker}`, thirst: 'har dött av törst', cold: 'har frusit ihjäl', poison: 'har dött efter att ha ätit gift', disease: 'har dött av sjukdom', meteor: 'träffades av en meteorit', kicked: 'blev nedsparkad av en uroxe', hunger: 'har somnat in av hunger' }[cause] + `, ${this.fmtAge(c.age)} gammal`, cause);
       } else if (c.age > c.g.maxAge) this.die(c, `har dött av ålder, ${this.fmtAge(c.age)} gammal`, 'age');
     }
     const [a, b] = this.creatures;
@@ -982,7 +1043,7 @@ class World {
   }
   childGenes(a, b) {
     const r = this.rng, g = {}, pick = k => (r.next() < 0.5 ? a[k] : b[k]);
-    const mutF = (k, sd, lo, hi) => { g[k] = clamp(pick(k) * Math.exp(r.gauss() * sd), lo, hi); };
+    const MB = this.mutBoost(), mutF = (k, sd, lo, hi) => { g[k] = clamp(pick(k) * Math.exp(r.gauss() * sd * MB), lo, hi); };
     const mutI = (k, lo, hi) => { g[k] = pick(k); if (r.next() < 0.05) g[k] = clamp(g[k] + (r.next() < 0.5 ? -1 : 1), lo, hi); };
     mutF('segL', 0.05, 1.5, 40); mutF('segH', 0.05, 1.5, 30); mutF('legL', 0.05, 1, 40); mutF('eye', 0.05, 0.4, 10);
     mutF('explore', 0.08, 0.02, 1); mutF('lr', 0.08, 0.0001, 0.1); mutF('maxAge', 0.05, 4 * DAY, 150 * DAY);
@@ -1022,7 +1083,7 @@ class World {
       }
       for (let m = 0; m < NO; m++) br.bo[m] = (r.next() < 0.5 ? a : b).bo[m];
     } else { const s = r.next() < 0.5 ? a : b; br = { H: s.H, wih: Float32Array.from(s.wih), whh: Float32Array.from(s.whh), bh: Float32Array.from(s.bh), who: Float32Array.from(s.who), bo: Float32Array.from(s.bo) }; }
-    for (const k of ['wih', 'whh', 'bh', 'who', 'bo']) { const w = br[k]; for (let i = 0; i < w.length; i++) if (r.next() < 0.1) w[i] = clamp(w[i] + r.gauss() * 0.15, -4, 4); }
+    for (const k of ['wih', 'whh', 'bh', 'who', 'bo']) { const w = br[k]; for (let i = 0; i < w.length; i++) if (r.next() < 0.1) w[i] = clamp(w[i] + r.gauss() * 0.15 * this.mutBoost(), -4, 4); }
     if (H2 !== br.H) br = this.resizeBrain(br, H2);
     return br;
   }
@@ -1049,7 +1110,7 @@ class World {
     const arr = a => Array.from(a, v => Math.round(v * 1e4) / 1e4);
     return {
       v: 3, ww: WW, zoneE: this.zoneE ? Array.from(this.zoneE, v => Math.round(v * 1000) / 1000) : null, seed: this.seed, rng: this.rng.s, time: this.time, nextId: this.nextId, firsts: this.firsts, log: this.log, lastDay: this.lastDay, lake: this.lake,
-      fert: arr(this.fert), dead: this.dead, maxGen: this.maxGen, births: this.births, popHist: this.popHist, lex: this.lex, ctxTot: this.ctxTot, uttTot: this.uttTot, stats: this.stats, moist: arr(this.moist), weather: this.weather, snow: this.snow, water0: this.water0, hist: this.hist, causes: this.causes, items: this.items, species: this.species, nextSp: this.nextSp, founders: this.founders, beasts: this.beasts.map(b => ({ ...b, biters: [] })), imm: this.imm, nextBeastId: this.nextBeastId, clim: this.clim, plague: this.plague, histAcc: this.histAcc, iv: this.iv,
+      fert: arr(this.fert), dead: this.dead, maxGen: this.maxGen, births: this.births, popHist: this.popHist, lex: this.lex, ctxTot: this.ctxTot, uttTot: this.uttTot, stats: this.stats, moist: arr(this.moist), weather: this.weather, snow: this.snow, water0: this.water0, hist: this.hist, causes: this.causes, items: this.items, species: this.species, nextSp: this.nextSp, founders: this.founders, cosmos: this.cosmos, beasts: this.beasts.map(b => ({ ...b, biters: [] })), imm: this.imm, nextBeastId: this.nextBeastId, clim: this.clim, plague: this.plague, histAcc: this.histAcc, iv: this.iv,
       tiles: b64(this.tiles), surface: Array.from(this.surface), plants: this.plants,
       creatures: this.creatures.map(c => ({
         id: c.id, name: c.name, gen: c.gen, parents: c.parents, g: c.g, x: c.x, y: c.y, vx: c.vx, vy: c.vy, face: c.face, energy: c.energy, age: c.age, alive: c.alive,
@@ -1068,6 +1129,7 @@ class World {
     w.lex = d.lex || {}; w.ctxTot = d.ctxTot || {}; w.uttTot = d.uttTot || 0; w.stats = d.stats || { digs: 0, builds: 0, gifts: 0 };
     if (d.moist) w.moist = Float32Array.from(d.moist); if (d.weather) w.weather = d.weather; w.snow = d.snow || 0;
     w.hist = d.hist || []; w.causes = d.causes || {}; w.items = d.items || []; w.species = d.species || []; w.nextSp = d.nextSp || 1; w.founders = d.founders || null; if (d.beasts) { w.beasts = d.beasts; w.imm = d.imm; for (const k in w.imm) w.imm[k] = Math.min(w.imm[k], w.time + 8 * DAY); w.nextBeastId = d.nextBeastId || 1; } else w.imm = { small: w.time + 1 * DAY, big: w.time + 4 * DAY };
+    if (d.cosmos) w.cosmos = d.cosmos; else w.initCosmos(w.time);
     if (d.clim) w.clim = d.clim; else w.clim.next = w.time + 20 * DAY; if (d.plague) w.plague = d.plague; else w.plague.next = w.time + 6 * DAY; w.histAcc = d.histAcc || 0; if (d.iv) w.iv = d.iv;
     const bin = atob(d.tiles); for (let i = 0; i < bin.length; i++) w.tiles[i] = bin.charCodeAt(i);
     w.surface = Int16Array.from(d.surface);
