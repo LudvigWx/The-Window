@@ -24,7 +24,8 @@ const IN_LABELS = [
   'hör framifrån', 'hör bakifrån', 'blicken', 'hörd tonhöjd', 'rör en varelse', 'är ung',
   'törst', 'rör vatten', 'kyla',
   'syn 1 djur', 'syn 2 djur', 'syn 3 djur', 'syn 4 djur', 'syn 5 djur',
-  'solens höjd', 'årstiden', 'lukt av växter framför', 'lukt av växter bakom', 'lukt av kött framför', 'lukt av kött bakom', 'rör en släkting'
+  'solens höjd', 'årstiden', 'lukt av växter framför', 'lukt av växter bakom', 'lukt av kött framför', 'lukt av kött bakom', 'rör en släkting',
+  'färg på växten den ser', 'färg på växten den rör'
 ];
 const OUT_LABELS = ['gå', 'hoppa', 'ät', 'greppa', 'gräv', 'röst', 'tonhöjd', 'para', 'ge'];
 const VOX = ['mu', 'mo', 'ma', 'na', 'ne', 'ni', 'ki', 'ti']; // låg ton → hög ton, så att ljuden kan skrivas som text
@@ -221,8 +222,8 @@ class World {
       max: clamp(parent.max * Math.exp(r.gauss() * 0.1), 6, 220), grow: clamp(parent.grow * Math.exp(r.gauss() * 0.08), 0.02, 0.5),
       h: clamp(parent.h * Math.exp(r.gauss() * 0.07) + r.gauss() * 0.03, 0.4, 8), hue: (parent.hue + r.gauss() * 4 + 360) % 360, berry: (parent.berry + r.gauss() * 6 + 360) % 360,
       life: clamp(parent.life * Math.exp(r.gauss() * 0.1), DAY * 2, DAY * 250), tox: clamp((parent.tox || 0) + r.gauss() * 0.04, 0, 1),
-      fr: clamp((parent.fr || 0) + r.gauss() * 0.03, 0, 0.7)
-    } : { max: r.range(10, 30), grow: r.range(0.06, 0.16), h: r.range(0.6, 1.6), hue: r.range(85, 135), berry: r.pick([350, 10, 25, 300, 45]), life: r.range(DAY * 5, DAY * 14), tox: r.range(0, 0.06), fr: r.range(0, 0.08) };
+      fr: clamp((parent.fr || 0) + r.gauss() * 0.03, 0, 0.7), fs: ((parent.fs ?? 0.5) + r.gauss() * 0.02 + 1) % 1
+    } : { max: r.range(10, 30), grow: r.range(0.06, 0.16), h: r.range(0.6, 1.6), hue: r.range(85, 135), berry: r.pick([350, 10, 25, 300, 45]), life: r.range(DAY * 5, DAY * 14), tox: r.range(0, 0.06), fr: r.range(0, 0.08), fs: r.range(0.4, 0.6) };
     const p = { x, b: parent ? 1 : r.range(2, g.max), age: parent ? 0 : r.range(0, g.life * 0.6), ...g };
     if (p.tox > 0.3) this.first('toxic', 'En giftig växt har vuxit fram i dalen. Den smakar illa och gör ont att äta.');
     this.plants.push(p); this.plantAt[x] = p; return p;
@@ -240,11 +241,12 @@ class World {
       const lt = this.localTemp(p.x), tf = clamp((lt - 2) / 10, 0.15, 1.3), f = this.fert[p.x], grown = 1.3 * p.grow * light / (1 + shade) / (1 + 0.1 * p.h) * tf * this.moisture(p.x) * (0.3 + 0.7 * clamp(f, 0, 2)) * (1 - 0.35 * (p.tox || 0)) * (1 - p.b / p.max) * dt;
       // frukt: en del av växandet blir frukt som faller till marken och bär frön
       const fr = p.fr || 0, yf = this.yearFrac();
-      if (fr > 0.01 && lt > 8 && yf > 0.3 && yf < 0.75 && p.b > p.max * 0.5) { p.fruit = (p.fruit || 0) + grown * fr * 3; }
+      const fd = Math.abs(((yf - (p.fs ?? 0.5)) % 1 + 1.5) % 1 - 0.5); // hur långt från växtens egen frukttid
+      if (fr > 0.01 && lt > 3 && fd < 0.14 && p.b > p.max * 0.5) { p.fruit = (p.fruit || 0) + grown * fr * 3; }
       p.b += grown * (1 - fr * 0.5); this.fert[p.x] = Math.max(0, f - grown * 0.004);
       if ((p.fruit || 0) >= 3 && this.items.length < 360) {
         p.fruit -= 3; const fx = wrapX((p.x + 0.5) * TS + this.rng.gauss() * TS * (1 + p.h)), fc = wrapT(Math.floor(fx / TS));
-        this.items.push({ x: fx, y: this.surface[fc] * TS, f: 3, t: this.time, owner: 0, seed: { max: p.max, grow: p.grow, h: p.h, hue: p.hue, berry: p.berry, life: p.life, tox: p.tox, fr: p.fr } });
+        this.items.push({ x: fx, y: this.surface[fc] * TS, f: 3, t: this.time, owner: 0, seed: { max: p.max, grow: p.grow, h: p.h, hue: p.hue, berry: p.berry, life: p.life, tox: p.tox, fr: p.fr, fs: p.fs } });
         this.first('fruit', 'En frukt faller till marken för första gången. Växterna har börjat sätta frukt.');
       }
       if (lt < 0 && p.b > p.max * 0.45) p.b -= 0.003 * dt * p.max; // frosten tar blad, men rötter och bär finns kvar
@@ -622,6 +624,7 @@ class World {
     const inp = c.inp, ex = c.x + c.face * c.w * 0.4, ey = c.y - c.h * 0.8;
     // synen uppdateras tio gånger per sekund (varannan takt), känslorna varje takt
     if (((this.stepN + c.id) & 1) === 0) for (let k = 0; k < RAY_ANGLES.length; k++) {
+      if (k === 0) { c.hueD = 1e9; c.hueSeen = null; }
       const a = RAY_ANGLES[k], dx = Math.cos(a) * c.face, dy = Math.sin(a);
       let hit = 0, d = RAY_LEN;
       for (let s = 5; s <= RAY_LEN; s += 5) {
@@ -629,7 +632,7 @@ class World {
         const ty = Math.floor(py / TS), col = wrapT(Math.floor(px / TS));
         if (ty >= WH || (ty >= 0 && SOLID[this.tiles[ty * WW + col]])) { hit = 1; d = s; break; }
         const p = this.plantAt[col];
-        if (p && p.b > 0.5) { const base = this.surface[col] * TS; if (py <= base && py >= base - this.plantHeight(p)) { hit = 2; d = s; c.rayTox = p.tox || 0; break; } }
+        if (p && p.b > 0.5) { const base = this.surface[col] * TS; if (py <= base && py >= base - this.plantHeight(p)) { hit = 2; d = s; if (s < c.hueD) { c.hueD = s; c.hueSeen = p.hue; } break; } }
         let found = null;
         for (const o of this.bins[col]) { if (o === c) continue; if (Math.abs(wrapD(px - o.x)) < o.w / 2 && py > o.y - o.h && py < o.y) { found = o; break; } }
         if (found) { hit = 3; d = s; c.seenId = found.id; break; }
@@ -637,7 +640,7 @@ class World {
         if (found) { hit = 4; d = s; break; }
       }
       c.rayHit[k] = hit; c.rayD[k] = d;
-      inp[k * 3] = hit ? 1 - d / RAY_LEN : 0; inp[k * 3 + 1] = hit === 2 ? 1 - 0.7 * c.rayTox : 0; inp[k * 3 + 2] = hit === 3 ? 1 : 0; inp[30 + k] = hit === 4 ? 1 : 0;
+      inp[k * 3] = hit ? 1 - d / RAY_LEN : 0; inp[k * 3 + 1] = hit === 2 ? 1 : 0; inp[k * 3 + 2] = hit === 3 ? 1 : 0; inp[30 + k] = hit === 4 ? 1 : 0;
       if (hit === 3 && c.gen === 1) this.sawOther(c);
     }
     inp[15] = c.touch; inp[16] = c.grounded ? 1 : 0; inp[17] = c.wall; inp[18] = clamp(c.energy / 120, 0, 1);
@@ -669,6 +672,8 @@ class World {
       inp[37] = clamp(pf / 60, 0, 1); inp[38] = clamp(pb / 60, 0, 1); inp[39] = clamp(mf / 40, 0, 1); inp[40] = clamp(mb / 40, 0, 1);
     }
     // släkt: föräldrar, barn och syskon
+    const hm = h => h == null ? 0 : clamp((((h - 110) % 360 + 540) % 360 - 180) / 90, -1, 1) || 0.01; // färgen som ett tal, grönt i mitten
+    inp[42] = hm(c.hueSeen); inp[43] = hm(c.touchHue);
     const o = c.touchO; inp[41] = o && ((c.parents && (c.parents.includes(o.id) || (o.parents && o.parents.some(p => c.parents.includes(p))))) || (o.parents && o.parents.includes(c.id))) ? 1 : 0;
   }
   sawOther(c) { const o = this.creatures.find(z => z.id === c.seenId); if (o && o.gen === 1) this.first('saw' + c.id, `${c.name} får syn på ${o.name} för första gången.`, c); }
@@ -755,7 +760,8 @@ class World {
     const mx = c.x + c.face * (c.w / 2 + 3), col = wrapT(Math.floor(mx / TS)), p = this.plantAt[col];
     c.touch = 0; c.eating = Math.max(0, c.eating - dt * 4);
     let plant = null, corpse = null, item = null, prey = null;
-    if (p && p.b > 0.3) { const base = this.surface[col] * TS; const ph = this.plantHeight(p); if (c.y > base - ph - 2 && c.y - c.h < base + 2 - (p.h > 2.2 ? ph * 0.55 : 0) && Math.abs(c.y - base) < TS * 1.6 + (p.h > 2.2 ? ph : 0)) { c.touch = 1; plant = p; } }
+    c.touchHue = null;
+    if (p && p.b > 0.3) { const base = this.surface[col] * TS; const ph = this.plantHeight(p); if (c.y > base - ph - 2 && c.y - c.h < base + 2 - (p.h > 2.2 ? ph * 0.55 : 0) && Math.abs(c.y - base) < TS * 1.6 + (p.h > 2.2 ? ph : 0)) { c.touch = 1; plant = p; c.touchHue = p.hue; } }
     if (!plant) for (const it of this.items) { if (Math.abs(wrapD(mx - it.x)) < 4 && Math.abs(c.y - it.y) < 10) { c.touch = 1; item = it; break; } }
     if (!plant && !item) for (const d of this.corpses) { if (d.flesh > 0.2 && Math.abs(wrapD(mx - d.x)) < d.w / 2 + 2 && Math.abs(c.y - d.y) < 10) { c.touch = 1; corpse = d; break; } }
     // jakt: bara den som har tänder för det (köttätargen över 0,25) och inte är mycket mindre än bytet
@@ -978,7 +984,7 @@ class World {
       legs: al.length ? Math.round(avg(c => c.g.legs) * 100) / 100 : null, tol: al.length ? Math.round(avg(c => c.g.tol || 0) * 100) / 100 : null,
       tox: Math.round(this.plants.reduce((a, p) => a + (p.tox || 0), 0) / pl * 100) / 100, gen: this.maxGen,
       carn: al.length ? Math.round(avg(c => c.g.carn || 0) * 100) / 100 : null, species: this.species.filter(s => s.n >= 3).length, items: this.items.length,
-      sick: al.length ? Math.round(al.filter(c => c.par).length / al.length * 100) : null, vir: al.some(c => c.par) ? Math.round(avg(c => c.par ? c.par.v : 0) / (al.filter(c => c.par).length / n) * 100) / 100 : null, parE: al.some(c => c.par) ? Math.round(al.filter(c => c.par).reduce((a, c) => a + (c.par.e ?? 0.15), 0) / al.filter(c => c.par).length * 100) : null, mem: al.length ? Math.round(avg(c => c.g.mem || 3000) / 60) : null, small: this.beasts.filter(b => b.alive && b.kind === 'small').length, big: this.beasts.filter(b => b.alive && b.kind === 'big').length, treeH: Math.round(this.plants.reduce((a, p) => a + p.h, 0) / pl * 100) / 100, trees: this.plants.filter(p => p.h > 2.2).length, fr: Math.round(this.plants.reduce((a, p) => a + (p.fr || 0), 0) / pl * 100) / 100, climT: Math.round(this.clim.t * 10) / 10, climW: Math.round(this.clim.w * 100) / 100
+      sick: al.length ? Math.round(al.filter(c => c.par).length / al.length * 100) : null, vir: al.some(c => c.par) ? Math.round(avg(c => c.par ? c.par.v : 0) / (al.filter(c => c.par).length / n) * 100) / 100 : null, parE: al.some(c => c.par) ? Math.round(al.filter(c => c.par).reduce((a, c) => a + (c.par.e ?? 0.15), 0) / al.filter(c => c.par).length * 100) : null, mem: al.length ? Math.round(avg(c => c.g.mem || 3000) / 60) : null, small: this.beasts.filter(b => b.alive && b.kind === 'small').length, big: this.beasts.filter(b => b.alive && b.kind === 'big').length, hueTox: (() => { const q = this.plants.filter(p => (p.tox || 0) > 0.25); return q.length >= 3 ? Math.round(q.reduce((a, p) => a + p.hue, 0) / q.length) : null; })(), hueSafe: (() => { const q = this.plants.filter(p => (p.tox || 0) < 0.1); return q.length >= 3 ? Math.round(q.reduce((a, p) => a + p.hue, 0) / q.length) : null; })(), treeH: Math.round(this.plants.reduce((a, p) => a + p.h, 0) / pl * 100) / 100, trees: this.plants.filter(p => p.h > 2.2).length, fr: Math.round(this.plants.reduce((a, p) => a + (p.fr || 0), 0) / pl * 100) / 100, climT: Math.round(this.clim.t * 10) / 10, climW: Math.round(this.clim.w * 100) / 100
     });
     this.iv = { births: 0, deaths: {}, utt: 0, digs: 0 };
     if (this.hist.length > 1600) this.hist = this.hist.filter((h, i) => i % 2 === 0 || i > this.hist.length - 200);
@@ -1115,7 +1121,8 @@ class World {
       }
       for (let m = 0; m < NO; m++) br.bo[m] = (r.next() < 0.5 ? a : b).bo[m];
     } else { const s = r.next() < 0.5 ? a : b; br = { H: s.H, wih: Float32Array.from(s.wih), whh: Float32Array.from(s.whh), bh: Float32Array.from(s.bh), who: Float32Array.from(s.who), bo: Float32Array.from(s.bo) }; }
-    for (const k of ['wih', 'whh', 'bh', 'who', 'bo']) { const w = br[k]; for (let i = 0; i < w.length; i++) if (r.next() < 0.1) w[i] = clamp(w[i] + r.gauss() * 0.15 * this.mutBoost(), -4, 4); }
+    const nW = br.wih.length + br.whh.length + br.bh.length + br.who.length + br.bo.length, pm = Math.min(0.1, 30 / nW); // ungefär lika många mutationer oavsett hjärnans storlek
+    for (const k of ['wih', 'whh', 'bh', 'who', 'bo']) { const w = br[k]; for (let i = 0; i < w.length; i++) if (r.next() < pm) w[i] = clamp(w[i] + r.gauss() * 0.15 * this.mutBoost(), -4, 4); }
     if (H2 !== br.H) br = this.resizeBrain(br, H2);
     return br;
   }

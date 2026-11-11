@@ -299,7 +299,7 @@ class Renderer {
       const sway = Math.sin(t * 1.3 + p.x) * (1 + world.wind) * h * 0.06;
       const ripe = p.b / p.max;
       const autumn = clamp((13 - world.temp) / 13, 0, 1), tox = p.tox || 0;
-      let hue = p.hue + (35 - p.hue) * autumn * 0.8; hue = hue + (285 - hue) * Math.min(1, tox * 0.9);
+      let hue = p.hue + (35 - p.hue) * autumn * 0.8; // giftet syns inte – bara växtens egen färg
       const sat = 45 - autumn * 15;
       if (p.h > 2.2) { // träd: stam och krona
         const cw = 4 + p.h * 3.2, cy = by - h + cw * 0.5;
@@ -307,7 +307,7 @@ class Renderer {
         const lf = Math.max(0.35, Math.min(1, ripe)), n2 = 5 + Math.floor(p.h);
         for (let i = 0; i < n2; i++) { const a = i / n2 * 6.283 + p.x, rr = cw * (0.35 + 0.35 * hash2(p.x, i)); g.fillStyle = `hsl(${hue + (i % 3) * 5},${sat + 5}%,${24 + (i % 4) * 4 - tox * 8}%)`; g.globalAlpha = 0.6 + 0.4 * lf; g.beginPath(); g.arc(bx + sway * 0.6 + Math.cos(a) * rr, cy + Math.sin(a) * rr * 0.6, cw * 0.42 * lf + 1, 0, 6.283); g.fill(); }
         g.globalAlpha = 1;
-        if ((p.fruit || 0) > 0.4) { g.fillStyle = tox > 0.3 ? 'hsl(280,70%,50%)' : `hsl(${p.berry},75%,55%)`; for (let i = 0; i < Math.min(8, Math.ceil(p.fruit * 2)); i++) { g.beginPath(); g.arc(bx + sway * 0.6 + Math.sin(i * 2.4 + p.x) * cw * 0.6, cy + Math.cos(i * 1.9) * cw * 0.35, 1.5, 0, 6.283); g.fill(); } }
+        if ((p.fruit || 0) > 0.4) { g.fillStyle = `hsl(${p.berry},75%,55%)`; for (let i = 0; i < Math.min(8, Math.ceil(p.fruit * 2)); i++) { g.beginPath(); g.arc(bx + sway * 0.6 + Math.sin(i * 2.4 + p.x) * cw * 0.6, cy + Math.cos(i * 1.9) * cw * 0.35, 1.5, 0, 6.283); g.fill(); } }
         continue;
       }
       g.strokeStyle = `hsl(${hue},${sat}%,${26 + ripe * 8}%)`; g.lineWidth = 1 + p.h * 0.4;
@@ -319,7 +319,7 @@ class Renderer {
         g.beginPath(); g.ellipse(lx + side * 3.2, ly, 3.6, 1.6, side * 0.5 + sway * 0.05, 0, 6.283); g.fill();
       }
       if (ripe > 0.6) {
-        g.fillStyle = tox > 0.3 ? `hsl(280,70%,${45 + tox * 10}%)` : `hsl(${p.berry},75%,55%)`;
+        g.fillStyle = `hsl(${p.berry},75%,55%)`;
         const k = Math.floor((ripe - 0.6) * 10) + 1;
         for (let i = 0; i < k; i++) { g.beginPath(); g.arc(bx + sway + Math.sin(i * 2.4) * 2.5, by - h + 1 + Math.cos(i * 2.4) * 2, 1.3, 0, 6.283); g.fill(); }
       }
